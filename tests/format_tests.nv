@@ -1,0 +1,247 @@
+// format_tests.nv — RFC 5952, rule by rule, and a generated
+// round trip over every shape a zero run can take.
+//
+// RFC 5952 is short and every one of its recommendations is a
+// separate way to get the same address wrong, so § 4 gets a test per
+// subsection rather than one test called "formatting".  § 5, the
+// mixed notation for an embedded IPv4 address, is the one place this
+// package and CPython disagree, and `narrow_tests.nv` carries that
+// disagreement as a decision rather than as a silence.
+//
+// THE GENERATED HALF
+//
+// A zero run is what the format is about, and there are exactly 256
+// patterns of "which of the eight groups are zero".  The round-trip
+// test walks all of them: write the address, read it back, and require
+// the same 128 bits, the promised length, and text that obeys the
+// lexical rules — lower case, no leading zeros in a group, at most one
+// `::`, and never a `::` standing for a single group.
+
+use std.str
+use std.test
+use ip
+use show
+
+// ── § 4.1 — leading zeros in a group are suppressed ──────────────────
+
+@test
+fn test_rfc5952_4_1_leading_zeros_are_suppressed() [io]
+    test.assert_eq_str(canon6("2001:0db8:0000:0000:0000:0000:0000:0001"), "2001:db8::1")
+    test.assert_eq_str(canon6("0001:0002:0003:0004:0005:0006:0007:0008"),
+                       "1:2:3:4:5:6:7:8")
+    test.assert_eq_str(canon6("2001:0db8:0aaa:000b:00cc:0ddd:000e:0001"),
+                       "2001:db8:aaa:b:cc:ddd:e:1")
+    // A group that IS zero is written `0`, not the empty string.
+    test.assert_eq_str(canon6("1:0:2:0:3:0:4:0"), "1:0:2:0:3:0:4:0")
+
+// ── § 4.2.1 — the `::` is used to its maximum capability ─────────────
+
+@test
+fn test_rfc5952_4_2_1_the_run_is_elided_as_far_as_it_goes() [io]
+    test.assert_eq_str(canon6("2001:db8:0:0:0:0:0:1"), "2001:db8::1")
+    test.assert_eq_str(canon6("0:0:0:0:0:0:0:0"), "::")
+    test.assert_eq_str(canon6("0:0:0:0:0:0:0:1"), "::1")
+    test.assert_eq_str(canon6("1:0:0:0:0:0:0:0"), "1::")
+    // Not "2001:db8:0::1" — the elision takes the whole run.
+    test.assert_eq_str(canon6("2001:0db8:0000:0000:0000:0000:0000:0001"), "2001:db8::1")
+
+// ── § 4.2.2 — a single zero group is NOT elided ──────────────────────
+
+@test
+fn test_rfc5952_4_2_2_a_run_of_one_is_written_out() [io]
+    // Both spellings are the same address; only one is the form the
+    // RFC asks for, and `::` is not it.
+    test.assert_eq_str(canon6("2001:db8:0:1:1:1:1:1"), "2001:db8:0:1:1:1:1:1")
+    test.assert_eq_str(canon6("2001:db8::1:1:1:1:1"), "2001:db8:0:1:1:1:1:1")
+    test.assert_eq_str(canon6("1:2:3:4:5:6:7:0"), "1:2:3:4:5:6:7:0")
+    test.assert_eq_str(canon6("1:2:3:4:5:6:7::"), "1:2:3:4:5:6:7:0")
+    test.assert_eq_str(canon6("0:1:2:3:4:5:6:7"), "0:1:2:3:4:5:6:7")
+    test.assert_eq_str(canon6("::1:2:3:4:5:6:7"), "0:1:2:3:4:5:6:7")
+
+// ── § 4.2.3 — the longest run, and the first of the longest ──────────
+
+@test
+fn test_rfc5952_4_2_3_the_longest_run_wins_and_ties_go_left() [io]
+    // Two runs, the second longer: the second is the one elided.
+    test.assert_eq_str(canon6("1:0:0:2:0:0:0:3"), "1:0:0:2::3")
+    // Two runs of the same length: the FIRST is elided.
+    test.assert_eq_str(canon6("1:0:0:0:2:0:0:3"), "1::2:0:0:3")
+    test.assert_eq_str(canon6("2001:db8:0:0:1:0:0:1"), "2001:db8::1:0:0:1")
+    // A run of one beside a run of two: the two wins even though it
+    // is further right.
+    test.assert_eq_str(canon6("1:0:2:0:0:3:4:5"), "1:0:2::3:4:5")
+
+// ── § 4.3 — lower case ───────────────────────────────────────────────
+
+@test
+fn test_rfc5952_4_3_hex_is_written_in_lower_case() [io]
+    test.assert_eq_str(canon6("2001:DB8:0:0:8:800:200C:417A"),
+                       "2001:db8::8:800:200c:417a")
+    test.assert_eq_str(canon6("FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF"),
+                       "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")
+    test.assert_eq_str(canon6("ABCD:EF01::"), "abcd:ef01::")
+
+// ── § 5 — the mixed notation for an embedded IPv4 address ────────────
+
+@test
+fn test_rfc5952_5_an_ipv4_mapped_address_is_written_in_mixed_notation() [io]
+    test.assert_eq_str(canon6("::ffff:192.0.2.1"), "::ffff:192.0.2.1")
+    test.assert_eq_str(canon6("::ffff:c000:201"), "::ffff:192.0.2.1")
+    test.assert_eq_str(canon6("0:0:0:0:0:ffff:c000:280"), "::ffff:192.0.2.128")
+    test.assert_eq_str(canon6("::ffff:0:0"), "::ffff:0.0.0.0")
+    test.assert_eq_str(canon6("::ffff:255.255.255.255"), "::ffff:255.255.255.255")
+    // The prefix has to be exactly `::ffff:` — one bit off and the
+    // address is not mapped and prints as hex.
+    test.assert_eq_str(canon6("::fffe:c000:201"), "::fffe:c000:201")
+    test.assert_eq_str(canon6("1::ffff:c000:201"), "1::ffff:c000:201")
+    // The deprecated IPv4-COMPATIBLE form is a different prefix and
+    // RFC 5952 § 5 does not ask for it in mixed notation.
+    test.assert_eq_str(canon6("::13.1.68.3"), "::d01:4403")
+
+// ── IPv4 text ────────────────────────────────────────────────────────
+
+@test
+fn test_ipv4_is_written_without_leading_zeros() [io]
+    test.assert_eq_str(canon4("0.0.0.0"), "0.0.0.0")
+    test.assert_eq_str(canon4("1.2.3.4"), "1.2.3.4")
+    test.assert_eq_str(canon4("255.255.255.255"), "255.255.255.255")
+    test.assert_eq_str(show.addr4(ip.ipv4_from_int(3221225985)), "192.0.2.1")
+    test.assert_eq_str(show.addr4(ip.ipv4(0, 0, 0, 10)), "0.0.0.10")
+    test.assert_eq_str(show.addr4(ip.ipv4(10, 100, 1, 0)), "10.100.1.0")
+
+// ── the promised length is the written length ────────────────────────
+
+@test
+fn test_the_length_a_caller_sizes_a_buffer_with_is_the_length_written() [io]
+    // `ipv4_len` and `ipv6_len` are what a caller with its own buffer
+    // asks first.  A promise one byte short is a buffer overrun, and
+    // one byte long is a trailing NUL in the middle of a config file.
+    for k in 0 .. 400
+        let v = (k * 10737418) % 4294967296
+        let a = ip.ipv4_from_int(v)
+        test.case(show.addr4(a))
+        test.assert_eq(str.len(show.addr4(a)), ip.ipv4_len(a))
+    for p in 0 .. 256
+        let a = pattern(p)
+        test.case(show.addr6(a))
+        test.assert_eq(str.len(show.addr6(a)), ip.ipv6_len(a))
+
+// ── the generated round trip ─────────────────────────────────────────
+
+@test
+fn test_every_zero_run_pattern_round_trips() [io]
+    // 256 patterns: for each of the eight groups, zero or not.  That
+    // is the whole space § 4.2 legislates over.
+    for p in 0 .. 256
+        let a = pattern(p)
+        let text = show.addr6(a)
+        test.case(text)
+        let back = ip.parse_ipv6(text)
+        test.assert_true(back.is_ok(), "what was written parses back")
+        let b: Ipv6 = back.addr
+        test.assert_true(a.eq(b), "the same 128 bits came back")
+        // And writing it a second time gives the same text, which is
+        // what "canonical" means.
+        test.assert_eq_str(show.addr6(b), text)
+
+@test
+fn test_the_generated_text_obeys_the_lexical_rules() [io]
+    for p in 0 .. 256
+        let a = pattern(p)
+        let text = show.addr6(a)
+        test.case(text)
+        test.assert_true(is_lower_hex_only(text), "§ 4.3 — no upper-case hex")
+        test.assert_false(has_leading_zero_group(text), "§ 4.1 — no leading zero in a group")
+        test.assert_true(double_colons(text) <= 1, "at most one `::`")
+        test.assert_true(elided_groups(a, text) != 1, "§ 4.2.2 — never one group elided")
+
+@test
+fn test_every_ipv4_address_in_a_stride_round_trips() [io]
+    for k in 0 .. 600
+        let v = (k * 7158278) % 4294967296
+        let a = ip.ipv4_from_int(v)
+        let text = show.addr4(a)
+        test.case(text)
+        let back = ip.parse_ipv4(text)
+        test.assert_true(back.is_ok(), "what was written parses back")
+        let b: Ipv4 = back.addr
+        test.assert_eq(b.to_int(), v)
+        test.assert_eq_str(show.addr4(b), text)
+
+// ── the fixtures ─────────────────────────────────────────────────────
+
+// The canonical text of an address, or the word `error` — a formatting
+// test that quietly compared two errors would pass forever.
+fn canon6(input: Str) -> Str
+    let p = ip.parse_ipv6(input)
+    if not p.is_ok()
+        return "error"
+    let a: Ipv6 = p.addr
+    show.addr6(a)
+
+fn canon4(input: Str) -> Str
+    let p = ip.parse_ipv4(input)
+    if not p.is_ok()
+        return "error"
+    let a: Ipv4 = p.addr
+    show.addr4(a)
+
+// The address whose group `i` is zero when bit `i` of `p` is clear.
+//
+// The non-zero groups are all different and span one, two, three and
+// four hex digits, so a formatter that dropped or reordered one is
+// caught by the round trip rather than by luck.
+fn pattern(p: Int) -> Ipv6
+    ip.ipv6(group_for(p, 0, 0x0001), group_for(p, 1, 0x0022),
+            group_for(p, 2, 0x0333), group_for(p, 3, 0x4444),
+            group_for(p, 4, 0xa000), group_for(p, 5, 0x00bc),
+            group_for(p, 6, 0x000d), group_for(p, 7, 0xffff))
+
+fn group_for(p: Int, i: Int, value: Int) -> Int
+    if bits.get(p, i) == 1
+        value
+    else
+        0
+
+fn is_lower_hex_only(s: Str) -> Bool
+    for i in 0 .. str.len(s)
+        let c = str.byte_at(s, i) ?? 0
+        if c >= 65 and c <= 90
+            return false
+    true
+
+// True when some group is written with a leading `0` — that is, a `0`
+// that is followed by another hex digit rather than standing alone.
+fn has_leading_zero_group(s: Str) -> Bool
+    for i in 0 .. str.len(s)
+        let c = str.byte_at(s, i) ?? 0
+        if c == 48
+            let before = if i == 0 then 58 else str.byte_at(s, i - 1) ?? 0
+            let after = str.byte_at(s, i + 1) ?? 58
+            if before == 58 and after != 58
+                return true
+    false
+
+fn double_colons(s: Str) -> Int
+    var n = 0
+    for i in 0 .. str.len(s) - 1
+        if (str.byte_at(s, i) ?? 0) == 58 and (str.byte_at(s, i + 1) ?? 0) == 58
+            n = n + 1
+    n
+
+// How many groups the text left out: eight, minus the ones it wrote.
+//
+// A group is written wherever a run of hex digits stands, so counting
+// the runs counts the groups.
+fn elided_groups(a: Ipv6, text: Str) -> Int
+    var written = 0
+    var in_run = false
+    for i in 0 .. str.len(text)
+        let c = str.byte_at(text, i) ?? 0
+        if c == 58
+            in_run = false
+        else
+            if not in_run
+                written = written + 1
+            in_run = true
+    8 - written

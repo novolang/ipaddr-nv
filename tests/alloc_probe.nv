@@ -1,0 +1,125 @@
+// alloc_probe.nv — a program that reaches every function in `ip` and
+// `cidr`, so the emitted LLVM can be read for a call to the allocator.
+//
+// This is not a test; `tests/orbit/test_ipaddr_nv.sh` builds it with
+// `--opt=0` and greps the IR.  `--opt=0` is what makes the check mean
+// anything: at the default optimisation level the whole probe inlines
+// into `novo_main` and there is no function left to attribute an
+// allocation to, so the assertion would pass by vacuity.
+//
+// Every call the package's non-allocating half can make is here,
+// because a function the probe never reaches is a function the linker
+// drops and the check never sees.  `show` is NOT here: it allocates,
+// that is what it is for, and reading its IR would only prove it.
+
+use std.bytes
+use ip
+use cidr
+
+// Everything `ip` can do to an address, with no `Str` built anywhere.
+fn addresses(text: Str, buf: Bytes) -> Int
+    var score = 0
+    let p4 = ip.parse_ipv4(text)
+    let q4 = ip.parse_ipv4_at(text, 0, 9)
+    if p4.is_ok() and q4.is_ok()
+        score = score + 1
+    match p4.error()
+        Some(_) => score = score + 2
+        None => score = score + 3
+    let a: Ipv4 = p4.addr
+    score = score + a.to_int() + a.octet(0) + a.cmp(ip.ipv4(10, 0, 0, 1))
+    if a.eq(ip.ipv4_from_int(a.to_int()))
+        score = score + 1
+    if a.is_unspecified() or a.is_loopback() or a.is_link_local()
+        score = score + 1
+    if a.is_multicast() or a.is_broadcast() or a.is_reserved()
+        score = score + 1
+    if a.is_documentation() or a.is_private()
+        score = score + 1
+    if ip.ipv4_zero().is_unspecified()
+        score = score + 1
+
+    let p6 = ip.parse_ipv6("2001:db8::1")
+    let q6 = ip.parse_ipv6_at("[2001:db8::1]", 1, 12)
+    if p6.is_ok() and q6.is_ok()
+        score = score + 1
+    match p6.error()
+        Some(_) => score = score + 2
+        None => score = score + 3
+    let s: Ipv6 = p6.addr
+    score = score + s.group(0) + s.octet(1) + s.cmp(ip.ipv6_zero())
+    if s.eq(ip.ipv6_from_halves(s.hi, s.lo))
+        score = score + 1
+    if s.is_unspecified() or s.is_loopback() or s.is_link_local()
+        score = score + 1
+    if s.is_site_local() or s.is_multicast() or s.is_unique_local()
+        score = score + 1
+    if s.is_documentation() or s.is_private()
+        score = score + 1
+    let m = ip.ipv4_mapped(a)
+    if m.is_ipv4_mapped()
+        score = score + m.mapped_ipv4().to_int()
+    if ip.ipv6_zero().is_unspecified()
+        score = score + 1
+    match ip.error_of(1)
+        Some(_) => score = score + 1
+        None => score = score + 2
+
+    // Formatting into a buffer the caller already owns, and the two
+    // length calls that size it.
+    var out = buf
+    score = score + ip.ipv4_len(a) + ip.ipv6_len(s)
+    out = ip.write_ipv4(out, 0, a)
+    out = ip.write_ipv6(out, 16, s)
+    // Bytes in, bytes out.
+    out = ip.ipv4_to_bytes(out, 60, a)
+    out = ip.ipv6_to_bytes(out, 64, s)
+    score = score + ip.ipv4_from_bytes(out, 60).to_int()
+    score = score + ip.ipv6_from_bytes(out, 64).group(0)
+    score
+
+// Everything `cidr` can do to a network.
+fn networks(text: Str) -> Int
+    var score = 0
+    let p = cidr.parse_net4(text, true)
+    let q = cidr.parse_net4(text, false)
+    if p.is_ok() and q.is_ok()
+        score = score + 1
+    match p.error()
+        Some(_) => score = score + 2
+        None => score = score + 3
+    let n: Net4 = q.net
+    score = score + n.network().to_int() + n.broadcast().to_int()
+    score = score + n.netmask().to_int() + n.hostmask().to_int()
+    score = score + n.first_host().to_int() + n.last_host().to_int()
+    score = score + n.num_addresses() + n.prefix
+    if n.contains(ip.ipv4(10, 0, 0, 1))
+        score = score + 1
+    let built = cidr.net4(ip.ipv4(192, 0, 2, 5), 24)
+    let b: Net4 = built.net
+    if n.overlaps(b)
+        score = score + 1
+
+    let p6 = cidr.parse_net6("2001:db8::/32", true)
+    let q6 = cidr.parse_net6("2001:db8::1/32", false)
+    if p6.is_ok() and q6.is_ok()
+        score = score + 1
+    match p6.error()
+        Some(_) => score = score + 2
+        None => score = score + 3
+    let n6: Net6 = p6.net
+    score = score + n6.network().group(0) + n6.last_address().group(7)
+    score = score + n6.netmask().group(0) + n6.hostmask().group(7)
+    score = score + n6.first_host().group(7) + n6.last_host().group(7)
+    score = score + n6.num_addresses() + n6.prefix
+    if n6.contains(ip.ipv6(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1))
+        score = score + 1
+    let built6 = cidr.net6(ip.ipv6_zero(), 64)
+    let b6: Net6 = built6.net
+    if n6.overlaps(b6)
+        score = score + 1
+    score
+
+fn main() [io]
+    let buf = bytes.zeros(96)
+    println(str.from_int(addresses("192.0.2.1", buf) + networks("10.0.0.0/8")))

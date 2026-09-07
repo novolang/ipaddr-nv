@@ -1,0 +1,473 @@
+// cidr.nv — a network: an address and how many of its leading bits are
+// the network's.
+//
+// A `Net4` or a `Net6` is a `@value` struct holding an address and a
+// prefix length, and every question about it is bit arithmetic over
+// those two numbers: which addresses it holds, where it starts and
+// ends, how many there are, whether it overlaps another one.  Nothing
+// in this module allocates, and everything except the two parsers
+// cross-compiles for a microcontroller — the same split `ip` draws and
+// for the same reason.
+//
+// THE ADDRESS IS ALWAYS MASKED
+//
+// `Net4 { addr: 192.0.2.5, prefix: 24 }` is not a value this module
+// hands out: the constructors mask the address down to its network
+// address, so `net.addr` and `net.network()` are the same thing and a
+// caller cannot be looking at a network that disagrees with itself.
+// That is `ipaddress.ip_network`'s behaviour, and `strict` decides
+// whether writing the host bits is an ERROR or merely dropped — not
+// whether they are kept.  A type that keeps the host address as well
+// is `ipaddress.ip_interface`, and this package does not have one.
+//
+// WHAT IT DOES NOT TAKE
+//
+// `addr/len` and nothing else.  `192.0.2.0/255.255.255.0` is
+// `NetmaskFormUnsupported`: Python reads a dotted netmask, and reads a
+// dotted HOSTMASK in the same position too (`/0.0.0.255` is a /24),
+// which means the same four octets can mean two different prefixes
+// depending on which bit pattern they happen to be.  A form with that
+// property does not belong in a parser whose whole job is to be exact
+// about which address you have, so it is refused with a reason rather
+// than guessed at.
+
+use std.bits
+use std.int
+use std.str
+use ip
+
+const SLASH: Int = 47
+const DOT: Int = 46
+const D_ZERO: Int = 48
+const D_NINE: Int = 57
+
+// The codes are `ip`'s — one vocabulary for the whole package, read
+// back through `ip.error_of` or the `error()` method on a result.
+const E_OK: Int = 0
+const E_EMPTY: Int = 1
+const E_EMPTY_PART: Int = 5
+const E_BAD_PREFIX: Int = 11
+const E_HOST_BITS: Int = 12
+const E_NETMASK_FORM: Int = 13
+
+// ── the two network types ────────────────────────────────────────────
+
+// An IPv4 network: a network address and a prefix length in `0 ..= 32`.
+//
+// `addr` is always masked — see the module comment.
+pub @value
+struct Net4
+    addr: Ipv4
+    prefix: Int
+
+// An IPv6 network: a network address and a prefix length in `0 ..= 128`.
+pub @value
+struct Net6
+    addr: Ipv6
+    prefix: Int
+
+// What `net4` and `parse_net4` answer: a network, or the reason there
+// is none.
+//
+// The same shape as `ip.Ipv4Parse`, and for the same reason: SPEC
+// § 14.5 rejects a `@value` struct as an optional payload, so the
+// reason travels beside the network rather than around it.
+pub @value
+struct Net4Parse
+    err: Int
+    net: Net4
+
+// What `net6` and `parse_net6` answer.
+pub @value
+struct Net6Parse
+    err: Int
+    net: Net6
+
+impl Net4Parse
+    // True when there is a network here.
+    @tier(embedded)
+    fn is_ok(self) -> Bool
+        self.err == E_OK
+
+    // Why there is not, or `None` when there is.
+    fn error(self) -> ?IpError
+        ip.error_of(self.err)
+
+impl Net6Parse
+    // True when there is a network here.
+    @tier(embedded)
+    fn is_ok(self) -> Bool
+        self.err == E_OK
+
+    // Why there is not, or `None` when there is.
+    fn error(self) -> ?IpError
+        ip.error_of(self.err)
+
+// ── masks ────────────────────────────────────────────────────────────
+//
+// `ip` keeps its own copies of these two private to itself.  Six lines
+// duplicated is the price of not putting a bit-twiddling helper on the
+// package's public surface, where it would be a name every consumer
+// has to read past to find the ones they wanted.
+
+// A 32-bit mask with the top `p` bits set, for `p` in `0 ..= 32`.
+@tier(embedded)
+fn mask32(p: Int) -> Int
+    bits.band(bits.shl(0xFFFFFFFF, 32 - p), 0xFFFFFFFF)
+
+// A 64-bit mask with the top `k` bits set; `k` outside `0 ..= 64`
+// saturates, which is what the two halves of an IPv6 prefix want.
+@tier(embedded)
+fn mask64(k: Int) -> Int
+    if k <= 0
+        0
+    else if k >= 64
+        bits.bnot(0)
+    else
+        bits.shl(bits.bnot(0), 64 - k)
+
+// ── IPv4 networks ────────────────────────────────────────────────────
+
+impl Net4
+    // The network address — the one every address in the network
+    // shares the leading `prefix` bits with.
+    @tier(embedded)
+    fn network(self) -> Ipv4
+        self.addr
+
+    // The broadcast address: every host bit set.
+    @tier(embedded)
+    fn broadcast(self) -> Ipv4
+        ip.ipv4_from_int(bits.bor(self.addr.raw, hostmask_raw(self.prefix)))
+
+    // The netmask as an address — `/24` is `255.255.255.0`.
+    @tier(embedded)
+    fn netmask(self) -> Ipv4
+        ip.ipv4_from_int(mask32(self.prefix))
+
+    // The host mask, the netmask's complement — `/24` is `0.0.0.255`.
+    @tier(embedded)
+    fn hostmask(self) -> Ipv4
+        ip.ipv4_from_int(hostmask_raw(self.prefix))
+
+    // True when `a` is one of this network's addresses.
+    @tier(embedded)
+    fn contains(self, a: Ipv4) -> Bool
+        bits.band(a.raw, mask32(self.prefix)) == self.addr.raw
+
+    // The first address a host may take.
+    //
+    // The network address is not one, except in the two networks that
+    // have no room for the convention: a `/31` is a point-to-point
+    // link whose two addresses are both hosts (RFC 3021), and a `/32`
+    // is one host.  That is `IPv4Network.hosts()`'s first element.
+    @tier(embedded)
+    fn first_host(self) -> Ipv4
+        if self.prefix >= 31
+            self.addr
+        else
+            ip.ipv4_from_int(self.addr.raw + 1)
+
+    // The last address a host may take: the broadcast address is not
+    // one, with the same two exceptions `first_host` names.
+    @tier(embedded)
+    fn last_host(self) -> Ipv4
+        let top = bits.bor(self.addr.raw, hostmask_raw(self.prefix))
+        if self.prefix >= 31
+            ip.ipv4_from_int(top)
+        else
+            ip.ipv4_from_int(top - 1)
+
+    // How many addresses the network holds, network and broadcast
+    // included: `2 ^ (32 - prefix)`, which is at most `2 ^ 32` and
+    // always fits an `Int`.
+    @tier(embedded)
+    fn num_addresses(self) -> Int
+        bits.shl(1, 32 - self.prefix)
+
+    // True when the two networks share an address.
+    //
+    // One of them holds the other's network address whenever they
+    // overlap at all, because a prefix's addresses are a contiguous
+    // block aligned to its own size.
+    @tier(embedded)
+    fn overlaps(self, other: Net4) -> Bool
+        self.contains(other.addr) or other.contains(self.addr)
+
+// The complement of the `p`-bit netmask, as a 32-bit number.
+@tier(embedded)
+fn hostmask_raw(p: Int) -> Int
+    bits.band(bits.bnot(mask32(p)), 0xFFFFFFFF)
+
+// The IPv4 network with this address and prefix, or the reason there
+// is none.
+//
+// The address is masked down to the network address; a prefix outside
+// `0 ..= 32` is `BadPrefixLength`.  Nothing here is strict about host
+// bits — a caller passing an address and a length has already decided
+// what it meant.  `parse_net4` is where `strict` lives.
+//
+// ```novo
+// use cidr
+// use ip
+//
+// fn main() [io]
+//     let n = cidr.net4(ip.ipv4(192, 0, 2, 5), 24)
+//     let block: Net4 = n.net
+//     println("${block.network().octet(3)}")     // 0
+//     println("${block.num_addresses()}")        // 256
+// ```
+pub @tier(embedded)
+fn net4(a: Ipv4, prefix: Int) -> Net4Parse
+    if prefix < 0 or prefix > 32
+        return net4_failed(E_BAD_PREFIX)
+    Net4Parse { err: E_OK,
+                net: Net4 { addr: ip.ipv4_from_int(bits.band(a.raw, mask32(prefix))),
+                            prefix: prefix } }
+
+@tier(embedded)
+fn net4_failed(code: Int) -> Net4Parse
+    Net4Parse { err: code, net: Net4 { addr: ip.ipv4_zero(), prefix: 0 } }
+
+// ── IPv6 networks ────────────────────────────────────────────────────
+
+impl Net6
+    // The network address.
+    @tier(embedded)
+    fn network(self) -> Ipv6
+        self.addr
+
+    // The last address in the network — every host bit set.
+    //
+    // Called `broadcast_address` by `ipaddress`, which is a name IPv6
+    // does not have a broadcast for; it is the top of the range, and
+    // that is what it is called here.
+    @tier(embedded)
+    fn last_address(self) -> Ipv6
+        ip.ipv6_from_halves(bits.bor(self.addr.hi, bits.bnot(mask64(self.prefix))),
+                            bits.bor(self.addr.lo, bits.bnot(mask64(self.prefix - 64))))
+
+    // The netmask as an address — `/64` is `ffff:ffff:ffff:ffff::`.
+    @tier(embedded)
+    fn netmask(self) -> Ipv6
+        ip.ipv6_from_halves(mask64(self.prefix), mask64(self.prefix - 64))
+
+    // The host mask, the netmask's complement.
+    @tier(embedded)
+    fn hostmask(self) -> Ipv6
+        ip.ipv6_from_halves(bits.bnot(mask64(self.prefix)),
+                            bits.bnot(mask64(self.prefix - 64)))
+
+    // True when `a` is one of this network's addresses.
+    @tier(embedded)
+    fn contains(self, a: Ipv6) -> Bool
+        bits.band(a.hi, mask64(self.prefix)) == self.addr.hi
+            and bits.band(a.lo, mask64(self.prefix - 64)) == self.addr.lo
+
+    // The first address a host may take.
+    //
+    // The network address is the Subnet-Router anycast address (RFC
+    // 4291 § 2.6.1) and is not a host's, except in a `/127`
+    // point-to-point link (RFC 6164) and a `/128` single host — the
+    // two exceptions `IPv6Network.hosts()` makes.
+    @tier(embedded)
+    fn first_host(self) -> Ipv6
+        if self.prefix >= 127
+            self.addr
+        else
+            increment(self.addr)
+
+    // The last address a host may take.
+    //
+    // Unlike IPv4 this IS the top of the range: IPv6 has no broadcast
+    // address to hold back, so `hosts()` runs to the end.
+    @tier(embedded)
+    fn last_host(self) -> Ipv6
+        self.last_address()
+
+    // How many addresses the network holds — `2 ^ (128 - prefix)` — or
+    // `-1` when that does not fit an `Int`, which is every prefix
+    // shorter than 66.
+    @tier(embedded)
+    fn num_addresses(self) -> Int
+        if 128 - self.prefix > 62
+            -1
+        else
+            bits.shl(1, 128 - self.prefix)
+
+    // True when the two networks share an address.
+    @tier(embedded)
+    fn overlaps(self, other: Net6) -> Bool
+        self.contains(other.addr) or other.contains(self.addr)
+
+// The address one above `a`, wrapping at the top of the range.
+//
+// `int.wrapping_add` and not `+`: a half is a bit pattern, and one
+// with its top bit set is a negative `Int` that `+` would trap on
+// (SPEC § 13.2).
+@tier(embedded)
+fn increment(a: Ipv6) -> Ipv6
+    let lo = int.wrapping_add(a.lo, 1)
+    if lo == 0
+        ip.ipv6_from_halves(int.wrapping_add(a.hi, 1), 0)
+    else
+        ip.ipv6_from_halves(a.hi, lo)
+
+// The IPv6 network with this address and prefix, or the reason there
+// is none.
+//
+// The address is masked; a prefix outside `0 ..= 128` is
+// `BadPrefixLength`.
+//
+// ```novo
+// use cidr
+// use ip
+//
+// fn main() [io]
+//     let n = cidr.net6(ip.ipv6(0x2001, 0x0DB8, 0, 0, 0, 0, 0, 1), 32)
+//     let block: Net6 = n.net
+//     println("${block.network().group(2)}")   // 0
+//     println("${block.contains(ip.ipv6(0x2001, 0x0DB8, 9, 9, 9, 9, 9, 9))}")  // true
+// ```
+pub @tier(embedded)
+fn net6(a: Ipv6, prefix: Int) -> Net6Parse
+    if prefix < 0 or prefix > 128
+        return net6_failed(E_BAD_PREFIX)
+    Net6Parse { err: E_OK,
+                net: Net6 { addr: ip.ipv6_from_halves(bits.band(a.hi, mask64(prefix)),
+                                                      bits.band(a.lo, mask64(prefix - 64))),
+                            prefix: prefix } }
+
+@tier(embedded)
+fn net6_failed(code: Int) -> Net6Parse
+    Net6Parse { err: code, net: Net6 { addr: ip.ipv6_zero(), prefix: 0 } }
+
+// ── parsing ──────────────────────────────────────────────────────────
+
+// The byte at `i`, or `-1` past either end.
+@tier(app)
+fn byte_of(s: Str, i: Int) -> Int
+    // The default is a BINDING and not the literal `-1`, and that
+    // is load-bearing: `-1` parses as a negation of `1`, and the
+    // compiler's rewrite of `str.byte_at(s, i) ?? d` into the
+    // unboxed read only fires for a literal or a variable.  With
+    // `?? -1` written directly, every byte read boxes a `?Int` on
+    // the heap — one allocation per character scanned.  Filed as
+    // `negated-literal-defeats-the-unboxed-byte-read`.
+    let miss = 0 - 1
+    str.byte_at(s, i) ?? miss
+
+// The index of the only `/` in `s`, `-1` when there is none, or `-2`
+// when there is more than one.
+@tier(app)
+fn slash_index(s: Str, n: Int) -> Int
+    var found = -1
+    for i in 0 .. n
+        if byte_of(s, i) == SLASH
+            if found >= 0
+                return -2
+            found = i
+    found
+
+// The prefix length written in `[from, to)`, or the negated error code
+// naming what is wrong with it.
+//
+// Decimal digits and nothing else, `max` at the most.  A leading zero
+// is accepted — `/024` is a `/24` — because `ipaddress` accepts it and
+// there is no octal reading of a prefix length for it to be confused
+// with.  A dot anywhere says the caller wrote a netmask, which gets a
+// reason of its own rather than `BadCharacter`.
+@tier(app)
+fn prefix_value(s: Str, from: Int, to: Int, max: Int) -> Int
+    if to <= from
+        return 0 - E_EMPTY_PART
+    for i in from .. to
+        if byte_of(s, i) == DOT
+            return 0 - E_NETMASK_FORM
+    var value = 0
+    for i in from .. to
+        let c = byte_of(s, i)
+        if c < D_ZERO or c > D_NINE
+            return 0 - E_BAD_PREFIX
+        value = value * 10 + (c - D_ZERO)
+        if value > max
+            return 0 - E_BAD_PREFIX
+    value
+
+// The IPv4 network `s` spells, or the reason it spells none.
+//
+// `192.0.2.0/24`, or a bare address for the `/32` that holds only it.
+// With `strict` true, an address with bits set below its prefix is
+// `HostBitsSet` — `192.0.2.5/24` is refused rather than quietly read
+// as `192.0.2.0/24`. With `strict` false it is read as
+// `192.0.2.0/24`, which is `ipaddress.ip_network(..., strict=False)`.
+//
+// ```novo
+// use cidr
+//
+// fn main() [io]
+//     let n = cidr.parse_net4("10.0.0.0/8", true)
+//     let block: Net4 = n.net
+//     println("${block.broadcast().octet(0)}")   // 10
+//     println("${cidr.parse_net4("192.0.2.5/24", true).is_ok()}")   // false
+// ```
+pub @tier(app)
+fn parse_net4(s: Str, strict: Bool) -> Net4Parse
+    let n = str.len(s)
+    if n == 0
+        return net4_failed(E_EMPTY)
+    let cut = slash_index(s, n)
+    if cut == -2
+        return net4_failed(E_BAD_PREFIX)
+    let stop = if cut < 0 then n else cut
+    let p4 = ip.parse_ipv4_at(s, 0, stop)
+    if not p4.is_ok()
+        return net4_failed(p4.err)
+    var prefix = 32
+    if cut >= 0
+        let v = prefix_value(s, cut + 1, n, 32)
+        if v < 0
+            return net4_failed(0 - v)
+        prefix = v
+    let a: Ipv4 = p4.addr
+    if strict and bits.band(a.raw, hostmask_raw(prefix)) != 0
+        return net4_failed(E_HOST_BITS)
+    net4(a, prefix)
+
+// The IPv6 network `s` spells, or the reason it spells none.
+//
+// `2001:db8::/32`, or a bare address for the `/128` that holds only
+// it.  `strict` means what it means for `parse_net4`.
+//
+// ```novo
+// use cidr
+//
+// fn main() [io]
+//     let n = cidr.parse_net6("2001:db8::/32", true)
+//     let block: Net6 = n.net
+//     println("${block.prefix}")                 // 32
+//     println("${block.num_addresses()}")        // -1
+// ```
+pub @tier(app)
+fn parse_net6(s: Str, strict: Bool) -> Net6Parse
+    let n = str.len(s)
+    if n == 0
+        return net6_failed(E_EMPTY)
+    let cut = slash_index(s, n)
+    if cut == -2
+        return net6_failed(E_BAD_PREFIX)
+    let stop = if cut < 0 then n else cut
+    let p6 = ip.parse_ipv6_at(s, 0, stop)
+    if not p6.is_ok()
+        return net6_failed(p6.err)
+    var prefix = 128
+    if cut >= 0
+        let v = prefix_value(s, cut + 1, n, 128)
+        if v < 0
+            return net6_failed(0 - v)
+        prefix = v
+    let a: Ipv6 = p6.addr
+    if strict and (bits.band(a.hi, bits.bnot(mask64(prefix))) != 0
+                   or bits.band(a.lo, bits.bnot(mask64(prefix - 64))) != 0)
+        return net6_failed(E_HOST_BITS)
+    net6(a, prefix)

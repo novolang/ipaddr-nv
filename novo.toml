@@ -1,0 +1,22 @@
+[package]
+name        = "ipaddr-nv"
+version     = "0.1.0"
+description = "IP addresses and CIDR networks as value types: an IPv4 or IPv6 address parses into a struct that lives on the stack, formats back out under RFC 5952, classifies itself against the special-purpose registry, and converts to bytes and integers without touching the heap."
+license     = "Apache-2.0"
+stability   = "experimental"
+category    = "networking"
+tags        = ["ip", "ipv4", "ipv6", "cidr", "ipaddress", "rfc5952", "rfc4291", "subnet"]
+repository  = "https://github.com/novolang/ipaddr-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.8.4"
+
+# A library: no `main`, so `novo pkg build` type-checks and
+# effect-checks every module under `src/` and writes no binary.
+
+[docs.pages]
+"README.md" = "Parsing, printing and classifying IP addresses and CIDR networks"
+
+[dependencies]
+# None, and that is the point of the package: the scanners are
+# hand-written loops over bytes and the standard library supplies
+# everything they read.

@@ -1,0 +1,307 @@
+// net_tests.nv — CIDR networks, against CPython's `ip_network`.
+//
+// Same method as `addr_tests.nv`: the INPUTS are the ones CPython's
+// own suite names plus this package's boundary set, and the EXPECTED
+// values are what `ipaddress` answers for them.  No CPython source is
+// vendored.
+//
+// A network case dumps every derived value at once — the network and
+// broadcast addresses, both masks, the prefix and the count — because
+// they are computed from one mask and a wrong mask gets several of
+// them wrong at once.  Reading all six is how you tell which.
+
+use std.str
+use std.test
+use cidr
+use ip
+use show
+
+struct NetCase
+    input: Str
+    want: Str
+
+struct Case
+    input: Str
+    want: Str
+
+// `network|broadcast|netmask|hostmask|prefix|count`, or `!Reason`.
+fn dump4(input: Str, strict: Bool) -> Str
+    let p = cidr.parse_net4(input, strict)
+    match p.error()
+        Some(e) => "!" + reason_name(e)
+        None    =>
+            let n: Net4 = p.net
+            show.addr4(n.network()) + "|" + show.addr4(n.broadcast())
+                + "|" + show.addr4(n.netmask()) + "|" + show.addr4(n.hostmask())
+                + "|" + str.from_int(n.prefix) + "|" + str.from_int(n.num_addresses())
+
+fn dump6(input: Str, strict: Bool) -> Str
+    let p = cidr.parse_net6(input, strict)
+    match p.error()
+        Some(e) => "!" + reason_name(e)
+        None    =>
+            let n: Net6 = p.net
+            show.addr6(n.network()) + "|" + show.addr6(n.last_address())
+                + "|" + show.addr6(n.netmask()) + "|" + show.addr6(n.hostmask())
+                + "|" + str.from_int(n.prefix) + "|" + str.from_int(n.num_addresses())
+
+fn reason_name(e: IpError) -> Str
+    match e
+        Empty => "Empty"
+        BadCharacter => "BadCharacter"
+        WrongPartCount => "WrongPartCount"
+        PartTooLong => "PartTooLong"
+        EmptyPart => "EmptyPart"
+        LeadingZero => "LeadingZero"
+        OctetOutOfRange => "OctetOutOfRange"
+        RepeatedDoubleColon => "RepeatedDoubleColon"
+        LoneColon => "LoneColon"
+        ZoneUnsupported => "ZoneUnsupported"
+        BadPrefixLength => "BadPrefixLength"
+        HostBitsSet => "HostBitsSet"
+        NetmaskFormUnsupported => "NetmaskFormUnsupported"
+
+// ── IPv4 networks that parse ─────────────────────────────────────────
+
+@test
+fn test_ipv4_networks_and_everything_derived_from_them() [io]
+    let cases = [
+        NetCase { input: "0.0.0.0/0",
+                  want: "0.0.0.0|255.255.255.255|0.0.0.0|255.255.255.255|0|4294967296" },
+        NetCase { input: "10.0.0.0/8",
+                  want: "10.0.0.0|10.255.255.255|255.0.0.0|0.255.255.255|8|16777216" },
+        NetCase { input: "172.16.0.0/12",
+                  want: "172.16.0.0|172.31.255.255|255.240.0.0|0.15.255.255|12|1048576" },
+        NetCase { input: "192.168.0.0/16",
+                  want: "192.168.0.0|192.168.255.255|255.255.0.0|0.0.255.255|16|65536" },
+        NetCase { input: "192.0.2.0/24",
+                  want: "192.0.2.0|192.0.2.255|255.255.255.0|0.0.0.255|24|256" },
+        NetCase { input: "203.0.113.0/24",
+                  want: "203.0.113.0|203.0.113.255|255.255.255.0|0.0.0.255|24|256" },
+        NetCase { input: "192.0.2.0/30",
+                  want: "192.0.2.0|192.0.2.3|255.255.255.252|0.0.0.3|30|4" },
+        NetCase { input: "192.0.2.0/31",
+                  want: "192.0.2.0|192.0.2.1|255.255.255.254|0.0.0.1|31|2" },
+        NetCase { input: "192.0.2.1/32",
+                  want: "192.0.2.1|192.0.2.1|255.255.255.255|0.0.0.0|32|1" },
+        NetCase { input: "255.255.255.255/32",
+                  want: "255.255.255.255|255.255.255.255|255.255.255.255|0.0.0.0|32|1" },
+        // No `/` at all is the whole address, which is a `/32`.
+        NetCase { input: "1.2.3.4",
+                  want: "1.2.3.4|1.2.3.4|255.255.255.255|0.0.0.0|32|1" },
+        // A leading zero in the PREFIX is fine — there is no octal
+        // reading of a prefix length for it to be confused with, and
+        // `ipaddress` accepts it too.
+        NetCase { input: "10.0.0.0/024",
+                  want: "10.0.0.0|10.0.0.255|255.255.255.0|0.0.0.255|24|256" }]
+    for c in cases
+        test.case(c.input)
+        test.assert_eq_str(dump4(c.input, true), c.want)
+
+// ── IPv6 networks that parse ─────────────────────────────────────────
+
+@test
+fn test_ipv6_networks_and_everything_derived_from_them() [io]
+    let cases = [
+        // `num_addresses` is `-1` whenever `2 ^ (128 - prefix)` will
+        // not fit an Int, which is every prefix below 66.  A count
+        // that silently wrapped would be worse than no count.
+        NetCase { input: "::/0",
+                  want: "::|ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff|::|ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff|0|-1" },
+        NetCase { input: "fc00::/7",
+                  want: "fc00::|fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff|fe00::|1ff:ffff:ffff:ffff:ffff:ffff:ffff:ffff|7|-1" },
+        NetCase { input: "fe80::/10",
+                  want: "fe80::|febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff|ffc0::|3f:ffff:ffff:ffff:ffff:ffff:ffff:ffff|10|-1" },
+        NetCase { input: "2001:db8::/32",
+                  want: "2001:db8::|2001:db8:ffff:ffff:ffff:ffff:ffff:ffff|ffff:ffff::|::ffff:ffff:ffff:ffff:ffff:ffff|32|-1" },
+        NetCase { input: "2001:db8::/64",
+                  want: "2001:db8::|2001:db8::ffff:ffff:ffff:ffff|ffff:ffff:ffff:ffff::|::ffff:ffff:ffff:ffff|64|-1" },
+        // /66 is the first prefix whose count fits.
+        NetCase { input: "2001:db8::/66",
+                  want: "2001:db8::|2001:db8::3fff:ffff:ffff:ffff|ffff:ffff:ffff:ffff:c000::|::3fff:ffff:ffff:ffff|66|4611686018427387904" },
+        NetCase { input: "2001:db8::/126",
+                  want: "2001:db8::|2001:db8::3|ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffc|::3|126|4" },
+        NetCase { input: "2001:db8::/127",
+                  want: "2001:db8::|2001:db8::1|ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe|::1|127|2" },
+        NetCase { input: "2001:db8::/128",
+                  want: "2001:db8::|2001:db8::|ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff|::|128|1" },
+        NetCase { input: "::1/128",
+                  want: "::1|::1|ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff|::|128|1" },
+        NetCase { input: "2001:db8::1",
+                  want: "2001:db8::1|2001:db8::1|ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff|::|128|1" },
+        NetCase { input: "2001:db8::/064",
+                  want: "2001:db8::|2001:db8::ffff:ffff:ffff:ffff|ffff:ffff:ffff:ffff::|::ffff:ffff:ffff:ffff|64|-1" }]
+    for c in cases
+        test.case(c.input)
+        test.assert_eq_str(dump6(c.input, true), c.want)
+
+// ── strict, and what it is strict about ──────────────────────────────
+
+@test
+fn test_host_bits_are_an_error_when_strict_and_dropped_when_not() [io]
+    let cases = [
+        Case { input: "192.0.2.5/24", want: "192.0.2.0/24" },
+        Case { input: "10.1.2.3/8", want: "10.0.0.0/8" },
+        Case { input: "192.0.2.1/31", want: "192.0.2.0/31" }]
+    for c in cases
+        test.case(c.input)
+        // Strict: the address disagrees with its own prefix, and
+        // saying so is the whole point of the flag.
+        test.assert_eq_str(dump4(c.input, true), "!HostBitsSet")
+        // Lax: the host bits are dropped, which is what
+        // `ip_network(..., strict=False)` does.
+        let p = cidr.parse_net4(c.input, false)
+        test.assert_true(p.is_ok(), "the lax parse takes it")
+        let n: Net4 = p.net
+        test.assert_eq_str(show.net4(n), c.want)
+
+@test
+fn test_host_bits_in_an_ipv6_network() [io]
+    test.assert_eq_str(dump6("2001:db8::1/32", true), "!HostBitsSet")
+    test.assert_eq_str(dump6("2001:db8::1/64", true), "!HostBitsSet")
+    let p = cidr.parse_net6("2001:db8::1/32", false)
+    let n: Net6 = p.net
+    test.assert_eq_str(show.net6(n), "2001:db8::/32")
+    // A /128 has no host bits, so strict never has anything to say.
+    test.assert_true(cidr.parse_net6("2001:db8::1/128", true).is_ok(),
+                     "a /128 is its own network address")
+
+// ── what does not parse, and why ─────────────────────────────────────
+
+@test
+fn test_networks_that_do_not_parse() [io]
+    // Out of range for the family, or not a number at all.
+    test.assert_eq_str(dump4("192.0.2.0/33", true), "!BadPrefixLength")
+    test.assert_eq_str(dump4("192.0.2.0/-1", true), "!BadPrefixLength")
+    test.assert_eq_str(dump4("192.0.2.0/x", true), "!BadPrefixLength")
+    test.assert_eq_str(dump4("192.0.2.0/24/24", true), "!BadPrefixLength")
+    test.assert_eq_str(dump6("2001:db8::/129", true), "!BadPrefixLength")
+    test.assert_eq_str(dump6("2001:db8::/x", true), "!BadPrefixLength")
+    test.assert_eq_str(dump6("::/0/0", true), "!BadPrefixLength")
+    // A `/` with nothing after it.
+    test.assert_eq_str(dump4("192.0.2.0/", true), "!EmptyPart")
+    test.assert_eq_str(dump6("2001:db8::/", true), "!EmptyPart")
+    // The address half is refused by the address parser, and its
+    // reason is what comes back.
+    test.assert_eq_str(dump4("1.2.3/24", true), "!WrongPartCount")
+    test.assert_eq_str(dump4("/24", true), "!Empty")
+    test.assert_eq_str(dump4("", true), "!Empty")
+    test.assert_eq_str(dump6("", true), "!Empty")
+    test.assert_eq_str(dump4("010.0.0.0/8", true), "!LeadingZero")
+    test.assert_eq_str(dump6("2001:db8:::/32", true), "!RepeatedDoubleColon")
+
+// ── membership ───────────────────────────────────────────────────────
+
+@test
+fn test_contains_at_both_ends_of_a_network() [io]
+    let p = cidr.parse_net4("192.0.2.0/24", true)
+    let n: Net4 = p.net
+    test.assert_false(n.contains(ip.ipv4(192, 0, 1, 255)), "one below is out")
+    test.assert_true(n.contains(ip.ipv4(192, 0, 2, 0)), "the network address is in")
+    test.assert_true(n.contains(ip.ipv4(192, 0, 2, 255)), "the broadcast address is in")
+    test.assert_false(n.contains(ip.ipv4(192, 0, 3, 0)), "one above is out")
+    // A /0 holds everything and a /32 holds one thing.
+    let all4: Net4 = cidr.parse_net4("0.0.0.0/0", true).net
+    test.assert_true(all4.contains(ip.ipv4(8, 8, 8, 8)), "a /0 holds every address")
+    let one4: Net4 = cidr.parse_net4("192.0.2.7/32", true).net
+    test.assert_true(one4.contains(ip.ipv4(192, 0, 2, 7)), "a /32 holds its own address")
+    test.assert_false(one4.contains(ip.ipv4(192, 0, 2, 8)), "and nothing else")
+
+@test
+fn test_contains_across_the_ipv6_half_boundary() [io]
+    // A /64 is exactly the high half, and a /65 puts one bit of the
+    // prefix in the low half — the case a two-word implementation
+    // gets wrong if it masks only one of them.
+    let n64: Net6 = cidr.parse_net6("2001:db8::/64", true).net
+    test.assert_true(n64.contains(ip.ipv6(0x2001, 0x0db8, 0, 0, 0xffff, 0xffff, 0xffff, 0xffff)),
+                     "every low-half bit is a host bit in a /64")
+    test.assert_false(n64.contains(ip.ipv6(0x2001, 0x0db8, 0, 1, 0, 0, 0, 0)),
+                      "a bit in the high half is outside")
+    let n65: Net6 = cidr.parse_net6("2001:db8::/65", true).net
+    test.assert_true(n65.contains(ip.ipv6(0x2001, 0x0db8, 0, 0, 0x7fff, 0xffff, 0xffff, 0xffff)),
+                     "the /65 holds the bottom half of the /64")
+    test.assert_false(n65.contains(ip.ipv6(0x2001, 0x0db8, 0, 0, 0x8000, 0, 0, 0)),
+                      "and not the top half")
+
+@test
+fn test_overlaps_is_symmetric_and_nesting_counts() [io]
+    let a: Net4 = cidr.parse_net4("10.0.0.0/8", true).net
+    let b: Net4 = cidr.parse_net4("10.1.0.0/16", true).net
+    let c: Net4 = cidr.parse_net4("11.0.0.0/8", true).net
+    test.assert_true(a.overlaps(b), "a supernet overlaps its subnet")
+    test.assert_true(b.overlaps(a), "and the other way round")
+    test.assert_false(a.overlaps(c), "adjacent networks do not overlap")
+    test.assert_false(c.overlaps(a), "and the other way round")
+    test.assert_true(a.overlaps(a), "a network overlaps itself")
+    let x: Net6 = cidr.parse_net6("2001:db8::/32", true).net
+    let y: Net6 = cidr.parse_net6("2001:db8:1::/48", true).net
+    let z: Net6 = cidr.parse_net6("2001:db9::/32", true).net
+    test.assert_true(x.overlaps(y), "an IPv6 supernet overlaps its subnet")
+    test.assert_false(x.overlaps(z), "adjacent IPv6 networks do not")
+
+// ── iteration bounds ─────────────────────────────────────────────────
+
+@test
+fn test_the_first_and_last_host_of_an_ipv4_network() [io]
+    // A /24: the network address and the broadcast address are not
+    // hosts, so the range is .1 through .254.
+    let n: Net4 = cidr.parse_net4("192.0.2.0/24", true).net
+    test.assert_eq_str(show.addr4(n.first_host()), "192.0.2.1")
+    test.assert_eq_str(show.addr4(n.last_host()), "192.0.2.254")
+    let n30: Net4 = cidr.parse_net4("192.0.2.0/30", true).net
+    test.assert_eq_str(show.addr4(n30.first_host()), "192.0.2.1")
+    test.assert_eq_str(show.addr4(n30.last_host()), "192.0.2.2")
+    // A /31 is a point-to-point link (RFC 3021): both addresses are
+    // hosts, because there is no room for the convention.
+    let n31: Net4 = cidr.parse_net4("192.0.2.0/31", true).net
+    test.assert_eq_str(show.addr4(n31.first_host()), "192.0.2.0")
+    test.assert_eq_str(show.addr4(n31.last_host()), "192.0.2.1")
+    // A /32 is one host.
+    let n32: Net4 = cidr.parse_net4("192.0.2.7/32", true).net
+    test.assert_eq_str(show.addr4(n32.first_host()), "192.0.2.7")
+    test.assert_eq_str(show.addr4(n32.last_host()), "192.0.2.7")
+
+@test
+fn test_the_first_and_last_host_of_an_ipv6_network() [io]
+    // IPv6 has no broadcast address, so the LAST address is a host and
+    // only the first is held back — the Subnet-Router anycast address
+    // of RFC 4291 § 2.6.1.  That asymmetry with IPv4 is `hosts()`'s,
+    // and getting it wrong is an off-by-one nobody notices until an
+    // allocator hands out an address twice.
+    let n: Net6 = cidr.parse_net6("2001:db8::/126", true).net
+    test.assert_eq_str(show.addr6(n.first_host()), "2001:db8::1")
+    test.assert_eq_str(show.addr6(n.last_host()), "2001:db8::3")
+    let n127: Net6 = cidr.parse_net6("2001:db8::/127", true).net
+    test.assert_eq_str(show.addr6(n127.first_host()), "2001:db8::")
+    test.assert_eq_str(show.addr6(n127.last_host()), "2001:db8::1")
+    let n128: Net6 = cidr.parse_net6("2001:db8::1/128", true).net
+    test.assert_eq_str(show.addr6(n128.first_host()), "2001:db8::1")
+    test.assert_eq_str(show.addr6(n128.last_host()), "2001:db8::1")
+    // The increment carries between the two halves, which is the one
+    // place a 128-bit `+ 1` can go wrong.
+    let carry: Net6 = cidr.parse_net6("2001:db8:0:0:ffff:ffff:ffff:ffff/64", false).net
+    test.assert_eq_str(show.addr6(carry.first_host()), "2001:db8::1")
+    let edge = ip.ipv6_from_halves(0x2001, 0 - 1)
+    let en: Net6 = cidr.net6(edge, 0).net
+    test.assert_true(en.contains(edge), "a /0 holds every address")
+
+// ── building a network without any text ──────────────────────────────
+
+@test
+fn test_a_network_can_be_built_from_an_address_and_a_length() [io]
+    let n = cidr.net4(ip.ipv4(192, 0, 2, 5), 24)
+    test.assert_true(n.is_ok(), "the constructor takes host bits and masks them")
+    let block: Net4 = n.net
+    test.assert_eq_str(show.net4(block), "192.0.2.0/24")
+    test.assert_false(cidr.net4(ip.ipv4(192, 0, 2, 0), 33).is_ok(), "/33 is not a prefix")
+    test.assert_false(cidr.net4(ip.ipv4(192, 0, 2, 0), 0 - 1).is_ok(), "nor is /-1")
+    let six = cidr.net6(ip.ipv6(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1), 32)
+    let snet: Net6 = six.net
+    test.assert_eq_str(show.net6(snet), "2001:db8::/32")
+    test.assert_false(cidr.net6(ip.ipv6_zero(), 129).is_ok(), "/129 is not a prefix")
+    test.assert_false(cidr.net6(ip.ipv6_zero(), 0 - 1).is_ok(), "nor is /-1")
+    // The reason travels with the failure.
+    match cidr.net4(ip.ipv4_zero(), 99).error()
+        Some(BadPrefixLength) => test.assert(true)
+        Some(_) => test.fail("the wrong reason")
+        None => test.fail("no reason at all")

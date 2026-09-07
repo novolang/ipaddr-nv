@@ -1,0 +1,439 @@
+// addr_tests.nv — parsing an address, against CPython's `ipaddress`.
+//
+// WHERE THE CASES CAME FROM
+//
+// CPython's own suite for `ipaddress` lives in
+// `Lib/test/test_ipaddress.py`, and the INPUTS it names for the
+// address classes are the inputs below — retyped into this file's
+// table shape, alongside a boundary set of this package's own.  No
+// CPython source is vendored here and none of its code is copied: what
+// was taken is the VERDICT the module gives on each string, which is
+// what an oracle is for.  CPython is PSF-licensed and this package is
+// Apache-2.0; a table of expected answers carries neither.
+//
+// HOW A CASE IS WRITTEN
+//
+// One line per input, and one expectation: the CANONICAL TEXT the
+// address prints as, or `!Reason` naming why it did not parse.  Both
+// halves in one column, because "which reason" is as much of the
+// contract as "which address" — a parser that refuses the right
+// strings for the wrong reasons cannot tell its caller anything.
+//
+// The three cases where this package is deliberately narrower than
+// CPython are NOT here.  They are in `narrow_tests.nv`, each asserting
+// the answer this package actually gives, with the reason it gives it.
+
+use std.str
+use std.test
+use ip
+use show
+
+struct Case
+    input: Str
+    want: Str
+
+struct IntCase
+    input: Str
+    want: Int
+
+// The canonical text `input` parses to, or `!Reason`.
+fn v4(input: Str) -> Str
+    let p = ip.parse_ipv4(input)
+    match p.error()
+        Some(e) => "!" + reason_name(e)
+        None    =>
+            let a: Ipv4 = p.addr
+            show.addr4(a)
+
+fn v6(input: Str) -> Str
+    let p = ip.parse_ipv6(input)
+    match p.error()
+        Some(e) => "!" + reason_name(e)
+        None    =>
+            let a: Ipv6 = p.addr
+            show.addr6(a)
+
+// The variant's own name.  `show.reason` gives a sentence for a
+// person; a table wants the name of the thing.
+fn reason_name(e: IpError) -> Str
+    match e
+        Empty => "Empty"
+        BadCharacter => "BadCharacter"
+        WrongPartCount => "WrongPartCount"
+        PartTooLong => "PartTooLong"
+        EmptyPart => "EmptyPart"
+        LeadingZero => "LeadingZero"
+        OctetOutOfRange => "OctetOutOfRange"
+        RepeatedDoubleColon => "RepeatedDoubleColon"
+        LoneColon => "LoneColon"
+        ZoneUnsupported => "ZoneUnsupported"
+        BadPrefixLength => "BadPrefixLength"
+        HostBitsSet => "HostBitsSet"
+        NetmaskFormUnsupported => "NetmaskFormUnsupported"
+
+fn check4(cases: [Case]) [io]
+    for c in cases
+        test.case(c.input)
+        test.assert_eq_str(v4(c.input), c.want)
+
+fn check6(cases: [Case]) [io]
+    for c in cases
+        test.case(c.input)
+        test.assert_eq_str(v6(c.input), c.want)
+
+// ── IPv4: what parses ────────────────────────────────────────────────
+
+@test
+fn test_ipv4_addresses_that_parse() [io]
+    check4([
+        Case { input: "0.0.0.0", want: "0.0.0.0" },
+        Case { input: "1.2.3.4", want: "1.2.3.4" },
+        Case { input: "192.0.2.1", want: "192.0.2.1" },
+        Case { input: "127.0.0.1", want: "127.0.0.1" },
+        Case { input: "255.255.255.255", want: "255.255.255.255" },
+        Case { input: "10.0.0.1", want: "10.0.0.1" },
+        Case { input: "172.16.0.1", want: "172.16.0.1" },
+        Case { input: "192.168.1.1", want: "192.168.1.1" },
+        Case { input: "169.254.1.1", want: "169.254.1.1" },
+        Case { input: "224.0.0.1", want: "224.0.0.1" },
+        Case { input: "240.0.0.1", want: "240.0.0.1" },
+        Case { input: "8.8.8.8", want: "8.8.8.8" },
+        Case { input: "198.18.0.1", want: "198.18.0.1" },
+        Case { input: "198.51.100.1", want: "198.51.100.1" },
+        Case { input: "203.0.113.1", want: "203.0.113.1" },
+        Case { input: "100.64.0.1", want: "100.64.0.1" },
+        Case { input: "192.0.0.170", want: "192.0.0.170" },
+        Case { input: "0.0.0.1", want: "0.0.0.1" },
+        Case { input: "255.0.0.0", want: "255.0.0.0" },
+        Case { input: "1.0.0.0", want: "1.0.0.0" },
+        // A single `0` octet is not a leading zero; `00` is.
+        Case { input: "0.1.0.1", want: "0.1.0.1" }])
+
+// ── IPv4: what does not, and why ─────────────────────────────────────
+
+@test
+fn test_ipv4_addresses_that_do_not_parse() [io]
+    check4([
+        Case { input: "", want: "!Empty" },
+        // Not four octets.  `127.1` is the shorthand `inet_aton` reads
+        // as 127.0.0.1 and no address library does.
+        Case { input: "1.2.3", want: "!WrongPartCount" },
+        Case { input: "1.2.3.4.5", want: "!WrongPartCount" },
+        Case { input: "1.2.3.4.", want: "!WrongPartCount" },
+        Case { input: "127.1", want: "!WrongPartCount" },
+        Case { input: "0x7f000001", want: "!WrongPartCount" },
+        Case { input: "::1", want: "!WrongPartCount" },
+        // Four dots, and an octet with nothing in it.
+        Case { input: "1.2.3.", want: "!EmptyPart" },
+        Case { input: ".1.2.3", want: "!EmptyPart" },
+        Case { input: "1..2.3", want: "!EmptyPart" },
+        // A leading zero would be octal to `inet_aton` and is refused
+        // outright rather than guessed at — the bug CVE-2021-29662 and
+        // its many siblings are all this one byte.
+        Case { input: "016.16.16.16", want: "!LeadingZero" },
+        Case { input: "016.016.016.016", want: "!LeadingZero" },
+        Case { input: "01.2.3.4", want: "!LeadingZero" },
+        Case { input: "1.02.3.4", want: "!LeadingZero" },
+        Case { input: "1.2.3.04", want: "!LeadingZero" },
+        Case { input: "0.0.0.00", want: "!LeadingZero" },
+        // Out of range.
+        Case { input: "1.2.3.256", want: "!OctetOutOfRange" },
+        Case { input: "300.1.1.1", want: "!OctetOutOfRange" },
+        // Too many digits is checked before the value, so `1234` is
+        // PartTooLong and `256` is OctetOutOfRange.
+        Case { input: "1.2.3.1234", want: "!PartTooLong" },
+        // Anything that is not a decimal digit, including a sign, a
+        // radix prefix, an exponent, surrounding space, and the
+        // non-ASCII digits `str.isdigit` would have accepted.
+        Case { input: "1.2.3.-4", want: "!BadCharacter" },
+        Case { input: "1.2.3.+4", want: "!BadCharacter" },
+        Case { input: "1.2.3.0x4", want: "!BadCharacter" },
+        Case { input: "1.2.3.4e0", want: "!BadCharacter" },
+        Case { input: "1.2.3.a", want: "!BadCharacter" },
+        Case { input: "a.2.3.4", want: "!BadCharacter" },
+        Case { input: "1.2.3.4 ", want: "!BadCharacter" },
+        Case { input: " 1.2.3.4", want: "!BadCharacter" },
+        Case { input: "1.2.3.4\n", want: "!BadCharacter" },
+        Case { input: "1.2.3.4:80", want: "!BadCharacter" },
+        Case { input: "1.2.3.4/24", want: "!BadCharacter" },
+        Case { input: "1.2.3.4%eth0", want: "!BadCharacter" },
+        Case { input: "١.٢.٣.٤", want: "!BadCharacter" },
+        Case { input: "1.2.3.０", want: "!BadCharacter" }])
+
+// ── IPv4: the number is the address ──────────────────────────────────
+
+@test
+fn test_ipv4_to_int_and_back() [io]
+    let cases = [
+        IntCase { input: "0.0.0.0", want: 0 },
+        IntCase { input: "0.0.0.1", want: 1 },
+        IntCase { input: "1.2.3.4", want: 16909060 },
+        IntCase { input: "8.8.8.8", want: 134744072 },
+        IntCase { input: "10.0.0.1", want: 167772161 },
+        IntCase { input: "100.64.0.1", want: 1681915905 },
+        IntCase { input: "127.0.0.1", want: 2130706433 },
+        IntCase { input: "169.254.1.1", want: 2851995905 },
+        IntCase { input: "172.16.0.1", want: 2886729729 },
+        IntCase { input: "192.0.0.170", want: 3221225642 },
+        IntCase { input: "192.0.2.1", want: 3221225985 },
+        IntCase { input: "192.168.1.1", want: 3232235777 },
+        IntCase { input: "198.18.0.1", want: 3323068417 },
+        IntCase { input: "198.51.100.1", want: 3325256705 },
+        IntCase { input: "203.0.113.1", want: 3405803777 },
+        IntCase { input: "224.0.0.1", want: 3758096385 },
+        IntCase { input: "240.0.0.1", want: 4026531841 },
+        IntCase { input: "255.0.0.0", want: 4278190080 },
+        IntCase { input: "1.0.0.0", want: 16777216 },
+        IntCase { input: "255.255.255.255", want: 4294967295 }]
+    for c in cases
+        test.case(c.input)
+        let p = ip.parse_ipv4(c.input)
+        let a: Ipv4 = p.addr
+        test.assert_eq(a.to_int(), c.want)
+        // And back: the number names the same address.
+        test.assert_eq_str(show.addr4(ip.ipv4_from_int(c.want)), c.input)
+
+@test
+fn test_ipv4_octets_read_left_to_right() [io]
+    let a = ip.ipv4(198, 51, 100, 7)
+    test.assert_eq(a.octet(0), 198)
+    test.assert_eq(a.octet(1), 51)
+    test.assert_eq(a.octet(2), 100)
+    test.assert_eq(a.octet(3), 7)
+    // Out of range answers 0 rather than panicking: an accessor that
+    // can bring the program down is one every caller has to guard.
+    test.assert_eq(a.octet(-1), 0)
+    test.assert_eq(a.octet(4), 0)
+    // Each argument is a byte and a wider one is truncated, the same
+    // way `as u8` truncates.
+    test.assert_eq_str(show.addr4(ip.ipv4(256 + 192, 0, 2, 1)), "192.0.2.1")
+
+@test
+fn test_ipv4_equality_and_order() [io]
+    let a = ip.ipv4(10, 0, 0, 1)
+    let b = ip.ipv4(10, 0, 0, 2)
+    test.assert_true(a.eq(ip.ipv4(10, 0, 0, 1)), "an address equals itself")
+    test.assert_false(a.eq(b), "two different addresses are not equal")
+    test.assert_eq(a.cmp(b), -1)
+    test.assert_eq(b.cmp(a), 1)
+    test.assert_eq(a.cmp(a), 0)
+    // The order is numeric, so 9.x sorts below 10.x and 255.x above.
+    test.assert_eq(ip.ipv4(9, 255, 255, 255).cmp(a), -1)
+    test.assert_eq(ip.ipv4(255, 0, 0, 0).cmp(a), 1)
+
+// ── IPv6: what parses ────────────────────────────────────────────────
+
+@test
+fn test_ipv6_addresses_that_parse() [io]
+    check6([
+        Case { input: "::", want: "::" },
+        Case { input: "::1", want: "::1" },
+        Case { input: "1::", want: "1::" },
+        Case { input: "1::8", want: "1::8" },
+        Case { input: "1:2::8", want: "1:2::8" },
+        Case { input: "2001:db8::1", want: "2001:db8::1" },
+        Case { input: "2001:db8::", want: "2001:db8::" },
+        Case { input: "1:2:3:4:5:6:7:8", want: "1:2:3:4:5:6:7:8" },
+        Case { input: "fe80::1", want: "fe80::1" },
+        Case { input: "ff02::1", want: "ff02::1" },
+        Case { input: "fc00::1", want: "fc00::1" },
+        Case { input: "fec0::1", want: "fec0::1" },
+        Case { input: "64:ff9b:1::1", want: "64:ff9b:1::1" },
+        Case { input: "100::1", want: "100::1" },
+        Case { input: "2001:1::1", want: "2001:1::1" },
+        Case { input: "2002::1", want: "2002::1" },
+        Case { input: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+               want: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
+        // Leading zeros inside a group are fine on the way in and
+        // gone on the way out (RFC 5952 § 4.1), and hex is read in
+        // either case and written in lower (§ 4.3).
+        Case { input: "2001:0db8:0000:0000:0000:0000:0000:0001",
+               want: "2001:db8::1" },
+        Case { input: "2001:DB8:0:0:8:800:200C:417A",
+               want: "2001:db8::8:800:200c:417a" },
+        Case { input: "0:0:0:0:0:0:0:0", want: "::" },
+        Case { input: "0:0:0:0:0:0:0:1", want: "::1" },
+        Case { input: "::0:0:1", want: "::1" },
+        // A `::` may stand for a single group, which is a thing to
+        // WRITE that RFC 5952 § 4.2.2 refuses to PRINT.
+        Case { input: "1:2:3:4:5:6:7::", want: "1:2:3:4:5:6:7:0" },
+        // The dotted tail of RFC 4291 § 2.2.  Only the mapped prefix
+        // prints back in mixed notation; the deprecated
+        // IPv4-COMPATIBLE form does not, and prints as hex.
+        Case { input: "::ffff:192.0.2.1", want: "::ffff:192.0.2.1" },
+        Case { input: "::FFFF:129.144.52.38", want: "::ffff:129.144.52.38" },
+        Case { input: "::ffff:0.0.0.0", want: "::ffff:0.0.0.0" },
+        Case { input: "::ffff:0:0", want: "::ffff:0.0.0.0" },
+        Case { input: "0:0:0:0:0:ffff:c000:280", want: "::ffff:192.0.2.128" },
+        Case { input: "::13.1.68.3", want: "::d01:4403" }])
+
+// ── IPv6: what does not, and why ─────────────────────────────────────
+
+@test
+fn test_ipv6_addresses_that_do_not_parse() [io]
+    check6([
+        Case { input: "", want: "!Empty" },
+        // Two colons is the fewest any legal form writes, so one part
+        // or two is refused before anything else is looked at.
+        Case { input: ":", want: "!WrongPartCount" },
+        Case { input: "1:2", want: "!WrongPartCount" },
+        Case { input: "1.2.3.4", want: "!WrongPartCount" },
+        // Too many groups, with and without a `::` to hide behind.
+        Case { input: "1:2:3:4:5:6:7:8:9", want: "!WrongPartCount" },
+        Case { input: "0:1:2:3:4:5:6:7:8", want: "!WrongPartCount" },
+        Case { input: "1:2:3:4:5:6:7:8:", want: "!WrongPartCount" },
+        Case { input: "1:2:3:4:5:6:7:8::", want: "!WrongPartCount" },
+        Case { input: "::1:2:3:4:5:6:7:8", want: "!WrongPartCount" },
+        Case { input: "::1:2:3:4:5:6:7:8:9", want: "!WrongPartCount" },
+        // A `::` that would stand for no groups at all leaves the
+        // address one short of eight and is refused as such.
+        Case { input: "1:2:3:4::5:6:7:8", want: "!WrongPartCount" },
+        // `::` may appear once.
+        Case { input: "1::2::3", want: "!RepeatedDoubleColon" },
+        Case { input: "1:::2", want: "!RepeatedDoubleColon" },
+        Case { input: "::1::", want: "!RepeatedDoubleColon" },
+        Case { input: "::::", want: "!RepeatedDoubleColon" },
+        // A single `:` at an end is only legal as half of a `::`.
+        Case { input: ":1:2:3:4:5:6:7", want: "!LoneColon" },
+        Case { input: "1:2:3:4:5:6:7:", want: "!LoneColon" },
+        // Five hex digits is one too many.
+        Case { input: "12345::", want: "!PartTooLong" },
+        Case { input: "1:2:3:4:5:6:7:12345", want: "!PartTooLong" },
+        // Not a hex digit, including space and the `/` of a network.
+        Case { input: "1:2:3:4:5:6:7:g", want: "!BadCharacter" },
+        Case { input: "1:2:3:4:5:6:7:8 ", want: "!BadCharacter" },
+        Case { input: " ::1", want: "!BadCharacter" },
+        Case { input: "::1\n", want: "!BadCharacter" },
+        Case { input: "2001:db8::1/64", want: "!BadCharacter" },
+        // A dotted tail is read as an IPv4 address, so its refusals
+        // are IPv4's refusals, reported as themselves.
+        Case { input: "::1.2.3", want: "!WrongPartCount" },
+        Case { input: "::1.2.3.4.5", want: "!WrongPartCount" },
+        Case { input: "::1.2.3.256", want: "!OctetOutOfRange" },
+        Case { input: "::1.2.3.04", want: "!LeadingZero" },
+        // A dotted quad anywhere but the last part is not a tail; the
+        // part it stands in is read as hex and is not hex.
+        Case { input: "1::2.3.4.5:6", want: "!BadCharacter" },
+        Case { input: "::ffff:1.2.3.4:5", want: "!BadCharacter" }])
+
+// ── IPv6: groups, octets, order ──────────────────────────────────────
+
+@test
+fn test_ipv6_groups_and_octets_read_left_to_right() [io]
+    let a = ip.ipv6(0x2001, 0x0DB8, 0x1234, 0x5678, 0x9ABC, 0xDEF0, 0x0011, 0x2233)
+    test.assert_eq(a.group(0), 0x2001)
+    test.assert_eq(a.group(3), 0x5678)
+    test.assert_eq(a.group(4), 0x9ABC)
+    test.assert_eq(a.group(7), 0x2233)
+    test.assert_eq(a.group(-1), 0)
+    test.assert_eq(a.group(8), 0)
+    test.assert_eq(a.octet(0), 0x20)
+    test.assert_eq(a.octet(1), 0x01)
+    test.assert_eq(a.octet(8), 0x9A)
+    test.assert_eq(a.octet(15), 0x33)
+    test.assert_eq(a.octet(-1), 0)
+    test.assert_eq(a.octet(16), 0)
+    // A group wider than sixteen bits is truncated to its low half.
+    test.assert_eq(ip.ipv6(0x12001, 0, 0, 0, 0, 0, 0, 0).group(0), 0x2001)
+
+@test
+fn test_ipv6_equality_and_order_are_unsigned() [io]
+    let lo = ip.parse_ipv6("::1")
+    let hi = ip.parse_ipv6("ff00::")
+    let a: Ipv6 = lo.addr
+    let b: Ipv6 = hi.addr
+    test.assert_true(a.eq(ip.ipv6(0, 0, 0, 0, 0, 0, 0, 1)), "an address equals itself")
+    test.assert_false(a.eq(b), "two different addresses are not equal")
+    // The high half of `ff00::` has its top bit set and reads as a
+    // NEGATIVE Int.  A signed comparison would put it below `::1`;
+    // an address ordering must not.
+    test.assert_eq(a.cmp(b), -1)
+    test.assert_eq(b.cmp(a), 1)
+    test.assert_eq(b.cmp(b), 0)
+    // The low half is only reached when the high halves agree, and it
+    // is unsigned there too.
+    let x = ip.ipv6_from_halves(0, 1)
+    let y = ip.ipv6_from_halves(0, 0 - 1)
+    test.assert_eq(x.cmp(y), -1)
+
+@test
+fn test_ipv6_halves_round_trip() [io]
+    let p = ip.parse_ipv6("2001:db8::1")
+    let a: Ipv6 = p.addr
+    test.assert_eq_str(show.addr6(ip.ipv6_from_halves(a.hi, a.lo)), "2001:db8::1")
+    test.assert_eq_str(show.addr6(ip.ipv6_zero()), "::")
+    test.assert_eq_str(show.addr4(ip.ipv4_zero()), "0.0.0.0")
+
+// ── the two families meet ────────────────────────────────────────────
+
+@test
+fn test_ipv4_mapped_addresses_carry_the_address_through() [io]
+    let m = ip.ipv4_mapped(ip.ipv4(192, 0, 2, 1))
+    test.assert_true(m.is_ipv4_mapped(), "::ffff:192.0.2.1 is mapped")
+    test.assert_eq(m.mapped_ipv4().to_int(), 3221225985)
+    test.assert_eq_str(show.addr6(m), "::ffff:192.0.2.1")
+    // The IPv4-COMPATIBLE form (RFC 4291 § 2.5.5.1, deprecated) is a
+    // different prefix and is not mapped.
+    let c = ip.parse_ipv6("::192.0.2.1")
+    let ca: Ipv6 = c.addr
+    test.assert_false(ca.is_ipv4_mapped(), "::192.0.2.1 is compatible, not mapped")
+    test.assert_eq(ca.mapped_ipv4().to_int(), 0)
+
+// ── spans: the entry point that copies nothing ───────────────────────
+
+@test
+fn test_parsing_a_span_of_a_larger_string() [io]
+    // What a URL parser or a configuration reader has: offsets into
+    // somebody else's string, and no reason to cut a new one.
+    let line = "peer=[2001:db8::1]:4433 name=192.0.2.7 end"
+    let six = ip.parse_ipv6_at(line, 6, 17)
+    let sa: Ipv6 = six.addr
+    test.assert_true(six.is_ok(), "the bracketed literal parses")
+    test.assert_eq_str(show.addr6(sa), "2001:db8::1")
+    let four = ip.parse_ipv4_at(line, 29, 38)
+    let fa: Ipv4 = four.addr
+    test.assert_true(four.is_ok(), "the dotted quad parses")
+    test.assert_eq_str(show.addr4(fa), "192.0.2.7")
+    // A span that takes one byte too many is a different string and
+    // gets a different answer.
+    test.assert_false(ip.parse_ipv4_at(line, 29, 39).is_ok(), "the trailing space is refused")
+    test.assert_false(ip.parse_ipv6_at(line, 5, 17).is_ok(), "the leading bracket is refused")
+
+// ── bytes in, bytes out ──────────────────────────────────────────────
+
+@test
+fn test_addresses_round_trip_through_a_packet_buffer() [io]
+    let a = ip.ipv4(198, 51, 100, 7)
+    var buf = bytes.zeros(24)
+    buf = ip.ipv4_to_bytes(buf, 0, a)
+    test.assert_eq(bytes.byte_at(buf, 0) ?? 0, 198)
+    test.assert_eq(bytes.byte_at(buf, 3) ?? 0, 7)
+    test.assert_true(ip.ipv4_from_bytes(buf, 0).eq(a), "four bytes back out")
+    let p = ip.parse_ipv6("2001:db8:1234:5678:9abc:def0:11:2233")
+    let s: Ipv6 = p.addr
+    buf = ip.ipv6_to_bytes(buf, 4, s)
+    test.assert_eq(bytes.byte_at(buf, 4) ?? 0, 0x20)
+    test.assert_eq(bytes.byte_at(buf, 19) ?? 0, 0x33)
+    test.assert_true(ip.ipv6_from_bytes(buf, 4).eq(s), "sixteen bytes back out")
+    // A read past the end takes zeros rather than panicking: a
+    // truncated packet gives a wrong address, not a dead program.
+    test.assert_eq(ip.ipv4_from_bytes(bytes.zeros(2), 0).to_int(), 0)
+    test.assert_true(ip.ipv6_from_bytes(bytes.zeros(2), 0).is_unspecified(),
+                     "a short buffer reads as ::")
+
+// ── the reason a caller can act on ───────────────────────────────────
+
+@test
+fn test_every_reason_has_a_code_and_a_sentence() [io]
+    // `error_of` is total over the codes the package uses, and success
+    // is None rather than a variant nobody can act on.
+    test.assert_none(ip.error_of(0))
+    for code in 1 .. 14
+        test.case(str.from_int(code))
+        match ip.error_of(code)
+            Some(e) => test.assert_true(str.len(show.reason(e)) > 10,
+                                        "the reason says something")
+            None    => test.fail("code ${str.from_int(code)} names no reason")
+    // And nothing outside the range invents one.
+    test.assert_none(ip.error_of(14))
+    test.assert_none(ip.error_of(0 - 1))

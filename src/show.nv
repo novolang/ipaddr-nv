@@ -1,0 +1,105 @@
+// show.nv — the half of the package that allocates, and all of it.
+//
+// `ip` and `cidr` never build anything: they answer questions about a
+// value, and when they produce text they write it into a `Bytes` the
+// caller already owns.  Every call in THIS module returns a `Str`, and
+// a `Str` is a heap cell.
+//
+// That is the whole reason the module exists.  Novo has no `[alloc]`
+// effect — SPEC § 5.1's vocabulary is exhaustive and a clause naming
+// `alloc` is `E3005` — so "this allocates and that does not" cannot be
+// a declaration the compiler checks.  It can be a module boundary,
+// which a build either crosses or does not, and a reader can see in
+// the `use` lines at the top of a file.  A program with no heap writes
+// `use ip` and stops there.
+//
+// Each function here is two lines: ask `ip` how long the text is,
+// allocate exactly that, and let `ip` write it.  There is no second
+// formatter to keep in step with the first.
+
+use std.bytes
+use std.str
+use ip
+use cidr
+
+// `a` as dotted-decimal: `192.0.2.1`.
+//
+// ```novo
+// use ip
+// use show
+//
+// fn main() [io]
+//     println(show.addr4(ip.ipv4(192, 0, 2, 1)))     // 192.0.2.1
+// ```
+pub fn addr4(a: Ipv4) -> Str
+    bytes.to_str(ip.write_ipv4(bytes.zeros(ip.ipv4_len(a)), 0, a))
+
+// `a` in RFC 5952 form: lower case, the longest run of zero groups
+// elided once, an IPv4-mapped address written `::ffff:192.0.2.1`.
+//
+// ```novo
+// use ip
+// use show
+//
+// fn main() [io]
+//     let p = ip.parse_ipv6("2001:0DB8:0:0:0:0:0:1")
+//     println(show.addr6(p.addr))                    // 2001:db8::1
+// ```
+pub fn addr6(a: Ipv6) -> Str
+    bytes.to_str(ip.write_ipv6(bytes.zeros(ip.ipv6_len(a)), 0, a))
+
+// `n` as `address/prefix`: `10.0.0.0/8`.
+//
+// ```novo
+// use cidr
+// use show
+//
+// fn main() [io]
+//     println(show.net4(cidr.parse_net4("10.1.2.3/8", false).net))   // 10.0.0.0/8
+// ```
+pub fn net4(n: Net4) -> Str
+    let a: Ipv4 = n.addr
+    "${addr4(a)}/${str.from_int(n.prefix)}"
+
+// `n` as `address/prefix`: `2001:db8::/32`.
+//
+// ```novo
+// use cidr
+// use show
+//
+// fn main() [io]
+//     println(show.net6(cidr.parse_net6("2001:db8::/32", true).net))  // 2001:db8::/32
+// ```
+pub fn net6(n: Net6) -> Str
+    let a: Ipv6 = n.addr
+    "${addr6(a)}/${str.from_int(n.prefix)}"
+
+// One sentence saying what was wrong with an input.
+//
+// Written to be shown to the person who typed the address, so each one
+// says what the parser wanted rather than which check refused it.
+//
+// ```novo
+// use ip
+// use show
+//
+// fn main() [io]
+//     match ip.parse_ipv4("10.0.0.300").error()
+//         Some(e) => println(show.reason(e))
+//         None    => println("it parsed")
+// ```
+pub fn reason(e: IpError) -> Str
+    match e
+        Empty => "the address is empty"
+        BadCharacter => "a character that cannot appear in an address"
+        WrongPartCount => "the wrong number of parts: an IPv4 address has four octets and an IPv6 address eight groups"
+        PartTooLong => "a part is too long: at most three digits in an octet and four in a hex group"
+        EmptyPart => "a separator with nothing after it"
+        LeadingZero => "an octet written with a leading zero, which is not read as octal here"
+        OctetOutOfRange => "an octet above 255"
+        RepeatedDoubleColon => "'::' appears more than once, so the run of zeros it stands for is not determined"
+        LoneColon => "a single ':' at the start or the end, which is only legal as half of a '::'"
+        ZoneUnsupported => "a zone identifier, which this package does not implement"
+        BadPrefixLength => "the prefix length is not a number in range for the family"
+        HostBitsSet => "the address has bits set below its prefix"
+        NetmaskFormUnsupported => "a dotted netmask; write the prefix length instead"

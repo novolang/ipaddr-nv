@@ -1,0 +1,202 @@
+// narrow_tests.nv — where this package is deliberately not CPython.
+//
+// Every one of these is a case `ipaddress` answers and this package
+// answers differently, on purpose.  They are tests rather than a
+// paragraph because a documented difference nobody checks is a
+// difference that becomes an accident on the next change: each one
+// asserts THE ANSWER THIS PACKAGE ACTUALLY GIVES, and says why it
+// gives it.
+//
+// If one of these ever needs to change, the test is the place the
+// decision is written down, and changing it is a decision rather than
+// a diff.
+
+use std.str
+use std.test
+use cidr
+use ip
+use show
+
+// ── 1. zone identifiers ──────────────────────────────────────────────
+
+@test
+fn test_a_zone_identifier_is_refused_rather_than_carried() [io]
+    // CPython 3.9 added scope ids: `IPv6Address('fe80::1%eth0')` parses
+    // and keeps `eth0` in `.scope_id`.  Here it is `ZoneUnsupported`.
+    //
+    // WHY.  A zone is an interface name — text.  An `Ipv6` in this
+    // package is a `@value` struct, and SPEC § 14.2 restricts those to
+    // scalars: `Str` is rejected outright, because a refcounted field
+    // would need a dup and a drop on every copy and the whole point of
+    // the type is that copying it is free.  Carrying a zone would mean
+    // either allocating (which `ip` does not do) or giving the address
+    // a span into a string it does not own and cannot outlive.
+    //
+    // Refusing it is the honest answer.  Silently DROPPING it would be
+    // worse than either: `fe80::1%eth0` and `fe80::1%eth1` are
+    // different destinations, and a parser that returned the same
+    // address for both would send packets down the wrong interface.
+    let cases = ["fe80::1%eth0", "fe80::1%0", "::1%lo", "%",
+                 "2001:db8::1%1", "::%eth0"]
+    for c in cases
+        test.case(c)
+        let p = ip.parse_ipv6(c)
+        test.assert_false(p.is_ok(), "a zone identifier does not parse")
+        match p.error()
+            Some(ZoneUnsupported) => test.assert(true)
+            Some(_) => test.fail("refused, but for the wrong reason")
+            None => test.fail("accepted")
+    // And through a network, where CPython would have taken it as well.
+    match cidr.parse_net6("fe80::1%eth0/64", false).error()
+        Some(ZoneUnsupported) => test.assert(true)
+        Some(_) => test.fail("refused, but for the wrong reason")
+        None => test.fail("accepted")
+
+// ── 2. RFC 5952 § 5 against CPython's formatter ──────────────────────
+
+@test
+fn test_an_ipv4_mapped_address_prints_in_mixed_notation_where_cpython_does_not() [io]
+    // `str(IPv6Address('::ffff:192.0.2.1'))` is `'::ffff:c000:201'` in
+    // CPython: its formatter writes eight hex groups and has no case
+    // for the mixed notation at all.
+    //
+    // RFC 5952 § 5 says an address with an embedded IPv4 address may be
+    // written in mixed notation, and that is what every other
+    // implementation and every human reader expects of `::ffff:`.  The
+    // brief for this package asks for the RFC, so the RFC is what it
+    // writes.
+    //
+    // The cost is one line in a consumer that compares this package's
+    // text against Python's: parse both and compare ADDRESSES, which
+    // is what should have been compared anyway.
+    let p = ip.parse_ipv6("::ffff:c000:201")
+    let a: Ipv6 = p.addr
+    test.assert_eq_str(show.addr6(a), "::ffff:192.0.2.1")
+    // Both spellings read back to the same address, so nothing is lost
+    // in either direction.
+    let q = ip.parse_ipv6("::ffff:192.0.2.1")
+    let b: Ipv6 = q.addr
+    test.assert_true(a.eq(b), "the two spellings are one address")
+    // The IPv4-COMPATIBLE prefix is NOT given the same treatment: RFC
+    // 5952 § 5 is about the mapped form, and the compatible form was
+    // deprecated by RFC 4291 § 2.5.5.1.
+    let c = ip.parse_ipv6("::192.0.2.1")
+    let d: Ipv6 = c.addr
+    test.assert_eq_str(show.addr6(d), "::c000:201")
+
+// ── 3. dotted netmasks and hostmasks ─────────────────────────────────
+
+@test
+fn test_a_dotted_netmask_is_refused_rather_than_read() [io]
+    // `ip_network('192.0.2.0/255.255.255.0')` is a /24 in CPython, and
+    // so is `ip_network('192.0.2.0/0.0.0.255')` — the second one is a
+    // HOSTMASK, recognised by its bit pattern.
+    //
+    // WHY NOT.  Which of the two a caller meant is decided by which
+    // way round the bits happen to fall, so `/255.0.0.0` is a /8 and
+    // `/0.0.0.255` is a /24 and `/255.255.255.255` and `/0.0.0.0` are
+    // each only one of the two by convention.  A parser whose job is
+    // to be exact about which addresses you have should not be
+    // guessing between two readings of the same four octets.
+    //
+    // The refusal has a reason of its own — not `BadCharacter` — so a
+    // caller can convert the form and retry rather than reject the
+    // line.
+    let cases = ["192.0.2.0/255.255.255.0", "192.0.2.0/0.0.0.255",
+                 "10.0.0.0/255.0.0.0", "0.0.0.0/0.0.0.0"]
+    for c in cases
+        test.case(c)
+        match cidr.parse_net4(c, false).error()
+            Some(NetmaskFormUnsupported) => test.assert(true)
+            Some(_) => test.fail("refused, but for the wrong reason")
+            None => test.fail("accepted")
+    // The prefix-length spelling of the same network is taken.
+    let p = cidr.parse_net4("192.0.2.0/24", true)
+    let block: Net4 = p.net
+    test.assert_eq_str(show.net4(block), "192.0.2.0/24")
+
+// ── 4. no interface type ─────────────────────────────────────────────
+
+@test
+fn test_a_network_never_keeps_the_host_bits_it_was_given() [io]
+    // `ipaddress` has THREE types where this package has two:
+    // `ip_address`, `ip_network` and `ip_interface`, the last of which
+    // is an address that also knows its prefix — `192.0.2.5/24` kept
+    // whole.  There is no `ip_interface` here.
+    //
+    // WHY.  It is the pair of an address and a network, and a caller
+    // that wants one can hold both: nothing is lost except a name.
+    // What IS gained is that `Net4` means one thing — a set of
+    // addresses — and cannot be quietly holding a host address that
+    // disagrees with its own prefix.
+    let lax = cidr.parse_net4("192.0.2.5/24", false)
+    let block: Net4 = lax.net
+    test.assert_eq_str(show.net4(block), "192.0.2.0/24")
+    test.assert_eq_str(show.addr4(block.network()), "192.0.2.0")
+    // Holding both is two bindings and no ceremony.
+    let host = ip.parse_ipv4("192.0.2.5")
+    let ha: Ipv4 = host.addr
+    test.assert_true(block.contains(ha), "the address and its network, side by side")
+
+// ── 5. a count that does not fit is -1, not a bignum ─────────────────
+
+@test
+fn test_num_addresses_answers_minus_one_rather_than_wrapping() [io]
+    // `IPv6Network('::/0').num_addresses` is 2^128 in Python, which
+    // has arbitrary-precision integers.  A Novo `Int` is 64 bits
+    // wide and signed, so any prefix shorter than 66 names more
+    // addresses than it can hold.
+    //
+    // `-1` says "more than I can count" in a value the caller must
+    // look at, where a wrapped count would be a plausible-looking
+    // number that is wrong.  `std.bigint` is where an exact answer
+    // would come from, and pulling it in would cost this package its
+    // empty `[dependencies]`.
+    let sizes = [0, 1, 32, 64, 65]
+    for p in sizes
+        test.case(str.from_int(p))
+        let n = cidr.net6(ip.ipv6_zero(), p)
+        let block: Net6 = n.net
+        test.assert_eq(block.num_addresses(), -1)
+    // /66 is the first that fits, and every prefix from there up
+    // answers exactly.
+    let n66: Net6 = cidr.net6(ip.ipv6_zero(), 66).net
+    test.assert_eq(n66.num_addresses(), 4611686018427387904)
+    let n128: Net6 = cidr.net6(ip.ipv6_zero(), 128).net
+    test.assert_eq(n128.num_addresses(), 1)
+    // IPv4 never has this problem: 2^32 fits with room to spare.
+    let all4: Net4 = cidr.net4(ip.ipv4_zero(), 0).net
+    test.assert_eq(all4.num_addresses(), 4294967296)
+
+// ── 6. what is not here at all ───────────────────────────────────────
+
+@test
+fn test_the_surface_that_exists_covers_what_the_missing_one_would() [io]
+    // `ipaddress` also carries `is_global`, `sixtofour`, `teredo`,
+    // `reverse_pointer`, `exploded`, `compressed`, `supernet`,
+    // `subnets`, `address_exclude` and iteration over a network's
+    // addresses.  None of them is here in 0.1.0, and the README says
+    // so rather than leaving a reader to find out.
+    //
+    // Two of them are one line away from what IS here, and this test
+    // is where a reader finds the line.
+    //
+    // `exploded` — every group written to four digits — is what the
+    // input side already accepts, so a round trip through this package
+    // normalises rather than explodes.
+    let p = ip.parse_ipv6("2001:0db8:0000:0000:0000:0000:0000:0001")
+    let a: Ipv6 = p.addr
+    test.assert_eq_str(show.addr6(a), "2001:db8::1")
+    test.assert_eq(a.group(1), 0x0db8)
+    // `is_global` is the complement of the private set for the cases
+    // that matter, and `is_private` is what the package answers.
+    test.assert_true(a.is_private(), "2001:db8::1 is in the private set")
+    let public = ip.parse_ipv4("8.8.8.8")
+    let pa: Ipv4 = public.addr
+    test.assert_false(pa.is_private(), "8.8.8.8 is not")
+    // `sixtofour` — the IPv4 address inside a 2002::/16 address — is
+    // two group reads.
+    let sixto = ip.parse_ipv6("2002:c000:0201::1")
+    let sa: Ipv6 = sixto.addr
+    let embedded = ip.ipv4(sa.octet(2), sa.octet(3), sa.octet(4), sa.octet(5))
+    test.assert_eq_str(show.addr4(embedded), "192.0.2.1")

@@ -1,0 +1,158 @@
+// embedded_probe.nv — the half of this package that runs on a
+// microcontroller, built as firmware and run under QEMU.
+//
+// This is not a test; `tests/orbit/test_ipaddr_nv.sh` cross-compiles it
+// for `--target=nrf52-qemu` and boots it.  What it proves is the thing
+// a host test cannot: that the value types, the classification and the
+// CIDR arithmetic LINK on a Cortex-M — no allocator, no `novo_bytes_*`,
+// and the 64-bit shifts and masks of the IPv6 halves lowered onto a
+// 32-bit core through whatever EABI helpers that takes.
+//
+// WHAT IS NOT HERE, AND WHY
+//
+// `parse_ipv4`, `parse_ipv6`, `cidr.parse_net4`, `cidr.parse_net6` and
+// the four `write_*` calls.  They read a `Str` or write a `Bytes`, and
+// the embedded runtime defines no `novo_bytes_*` symbol at all and no
+// `novo_str_byte_at`.  They carry `@tier(app)` for that reason and a
+// device build prunes them; calling one from here would be a link
+// error naming the missing symbol rather than a tier error naming the
+// rule.  The two filings are `no-embedded-byte-read-of-a-str`
+// and `no-embedded-str-byte-read-at-rt-tier`.
+//
+// So on a device an address can be built from the bytes of a packet
+// header (as `Int` arguments), held, compared, classified and matched
+// against a routing table — which is the whole of what a link-layer
+// stack does with one — and cannot be read out of a configuration
+// string.  The configuration is the host's job today.
+
+use std.str
+use ip
+use cidr
+
+// Every answer this probe checks, folded into one number so a single
+// comparison decides the run.  A firmware image has one line of
+// output; making it depend on all of them is what stops a passing run
+// from meaning "the first assertion held".
+@tier(rt)
+fn score() -> Int
+    var n = 0
+
+    // Construction and the accessors.
+    let a = ip.ipv4(192, 0, 2, 1)
+    if a.to_int() == 3221225985
+        n = n + 1
+    if a.octet(0) == 192 and a.octet(3) == 1
+        n = n + 1
+    if ip.ipv4_from_int(3221225985).eq(a)
+        n = n + 1
+    if ip.ipv4_zero().is_unspecified()
+        n = n + 1
+
+    // Classification, IPv4.
+    if ip.ipv4(127, 0, 0, 1).is_loopback() and ip.ipv4(10, 1, 1, 1).is_private()
+        n = n + 1
+    if ip.ipv4(169, 254, 0, 1).is_link_local() and ip.ipv4(224, 0, 0, 1).is_multicast()
+        n = n + 1
+    if ip.ipv4(255, 255, 255, 255).is_broadcast() and ip.ipv4(240, 0, 0, 1).is_reserved()
+        n = n + 1
+    if a.is_documentation() and not ip.ipv4(8, 8, 8, 8).is_private()
+        n = n + 1
+
+    // The IPv6 halves: 64-bit shifts and masks on a 32-bit core.
+    let s = ip.ipv6(0x2001, 0x0DB8, 0, 0, 0, 0, 0, 1)
+    if s.group(0) == 0x2001 and s.group(1) == 0x0DB8 and s.group(7) == 1
+        n = n + 1
+    if s.octet(0) == 0x20 and s.octet(15) == 1
+        n = n + 1
+    if ip.ipv6_from_halves(s.hi, s.lo).eq(s)
+        n = n + 1
+    if s.is_documentation() and s.is_private()
+        n = n + 1
+    if ip.ipv6_zero().is_unspecified() and ip.ipv6_from_halves(0, 1).is_loopback()
+        n = n + 1
+    if ip.ipv6(0xFE80, 0, 0, 0, 0, 0, 0, 1).is_link_local()
+        n = n + 1
+    if ip.ipv6(0xFC00, 0, 0, 0, 0, 0, 0, 1).is_unique_local()
+        n = n + 1
+    if ip.ipv6(0xFF02, 0, 0, 0, 0, 0, 0, 1).is_multicast()
+        n = n + 1
+    if ip.ipv6(0xFEC0, 0, 0, 0, 0, 0, 0, 1).is_site_local()
+        n = n + 1
+
+    // The comparison that reads all 128 bits as unsigned — the one an
+    // Int comparison gets backwards whenever the top bit is set.
+    if ip.ipv6(0xFF00, 0, 0, 0, 0, 0, 0, 0).cmp(ip.ipv6_from_halves(0, 1)) == 1
+        n = n + 1
+    if a.cmp(ip.ipv4(192, 0, 2, 2)) == 0 - 1
+        n = n + 1
+
+    // The mapped form, which is what a dual-stack socket hands up.
+    let m = ip.ipv4_mapped(a)
+    if m.is_ipv4_mapped() and m.mapped_ipv4().eq(a)
+        n = n + 1
+
+    // The lengths a caller would size a buffer with, computed without
+    // one: `ipv4_len` and `ipv6_len` are `Int` algebra and reach the
+    // device even though `write_ipv4` does not.
+    if ip.ipv4_len(a) == 9 and ip.ipv6_len(s) == 11
+        n = n + 1
+
+    // CIDR: the arithmetic a routing table is.
+    let built = cidr.net4(ip.ipv4(192, 0, 2, 5), 24)
+    if built.is_ok()
+        let block: Net4 = built.net
+        if block.network().eq(ip.ipv4(192, 0, 2, 0))
+            n = n + 1
+        if block.broadcast().eq(ip.ipv4(192, 0, 2, 255))
+            n = n + 1
+        if block.netmask().eq(ip.ipv4(255, 255, 255, 0))
+            n = n + 1
+        if block.hostmask().eq(ip.ipv4(0, 0, 0, 255))
+            n = n + 1
+        if block.contains(a) and not block.contains(ip.ipv4(192, 0, 3, 1))
+            n = n + 1
+        if block.first_host().eq(ip.ipv4(192, 0, 2, 1))
+            n = n + 1
+        if block.last_host().eq(ip.ipv4(192, 0, 2, 254))
+            n = n + 1
+        if block.num_addresses() == 256
+            n = n + 1
+        if block.overlaps(cidr.net4(ip.ipv4(192, 0, 0, 0), 16).net)
+            n = n + 1
+
+    let six = cidr.net6(s, 32)
+    if six.is_ok()
+        let block6: Net6 = six.net
+        if block6.network().eq(ip.ipv6(0x2001, 0x0DB8, 0, 0, 0, 0, 0, 0))
+            n = n + 1
+        if block6.contains(s) and not block6.contains(ip.ipv6(0x2001, 0x0DB9, 0, 0, 0, 0, 0, 1))
+            n = n + 1
+        if block6.first_host().eq(ip.ipv6(0x2001, 0x0DB8, 0, 0, 0, 0, 0, 1))
+            n = n + 1
+        if block6.num_addresses() == 0 - 1
+            n = n + 1
+        // The 128-bit increment carries between the halves.
+        let carry = cidr.net6(ip.ipv6(0x2001, 0x0DB8, 0, 0, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF), 64)
+        let cb: Net6 = carry.net
+        if cb.first_host().eq(ip.ipv6(0x2001, 0x0DB8, 0, 0, 0, 0, 0, 1))
+            n = n + 1
+    if not cidr.net4(ip.ipv4_zero(), 33).is_ok()
+        n = n + 1
+    n
+
+@tier(rt)
+fn main() [hw, time]
+    bsp.board.init()
+    // 36 is the number of checks in `score`.  The count is printed on
+    // a failure rather than only compared, so a device that disagrees
+    // with the host says HOW MANY it lost and a bisect has somewhere
+    // to start.
+    let n = score()
+    if n == 36
+        hal.uart.write("PASS: ipaddr-embedded\n")
+    else
+        hal.uart.write("FAIL: ipaddr-embedded score=")
+        hal.uart.write(str.from_int(n))
+        hal.uart.write("\n")
+    loop
+        core.rt.sleep_ms(1000)

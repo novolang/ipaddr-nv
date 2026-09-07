@@ -1,0 +1,283 @@
+// classify_tests.nv — every boundary of every classification range.
+//
+// A range test is wrong in exactly one interesting way: off by one at
+// an end.  So the table below walks each block's edges — the address
+// just BELOW it, its first, its last, and the address just ABOVE —
+// rather than sampling somewhere in the middle where every wrong mask
+// still gives the right answer.
+//
+// HOW A CASE IS WRITTEN
+//
+// One line per address, and the expectation is the whole
+// classification as a string of letters, so a case that goes wrong
+// prints every predicate rather than the first one that disagreed.
+//
+//   IPv4   u unspecified   l loopback     L link-local   m multicast
+//          b broadcast     r reserved     d documentation
+//          p private
+//
+//   IPv6   u unspecified   l loopback     L link-local   s site-local
+//          m multicast     U unique-local d documentation
+//          M IPv4-mapped   p private
+//
+// `-` is "none of them".
+//
+// WHERE THE EXPECTATIONS CAME FROM
+//
+// CPython 3.10's `ipaddress`, one property call per letter, on the
+// same inputs.  `d` for IPv4 is this package's own — CPython has no
+// `is_documentation` for IPv4 — and is RFC 5737's three TEST-NET
+// blocks.  The `p` column is CPython's `is_private`, which is the
+// special-purpose registry of RFC 6890; the set has grown in releases
+// after 3.10 and the README says which release this is checked
+// against.
+
+use std.str
+use std.test
+use ip
+use show
+
+struct Case
+    input: Str
+    want: Str
+
+fn flags4(input: Str) -> Str
+    let p = ip.parse_ipv4(input)
+    if not p.is_ok()
+        return "error"
+    let a: Ipv4 = p.addr
+    var f = ""
+    if a.is_unspecified()
+        f = f + "u"
+    if a.is_loopback()
+        f = f + "l"
+    if a.is_link_local()
+        f = f + "L"
+    if a.is_multicast()
+        f = f + "m"
+    if a.is_broadcast()
+        f = f + "b"
+    if a.is_reserved()
+        f = f + "r"
+    if a.is_documentation()
+        f = f + "d"
+    if a.is_private()
+        f = f + "p"
+    if str.len(f) == 0
+        "-"
+    else
+        f
+
+fn flags6(input: Str) -> Str
+    let p = ip.parse_ipv6(input)
+    if not p.is_ok()
+        return "error"
+    let a: Ipv6 = p.addr
+    var f = ""
+    if a.is_unspecified()
+        f = f + "u"
+    if a.is_loopback()
+        f = f + "l"
+    if a.is_link_local()
+        f = f + "L"
+    if a.is_site_local()
+        f = f + "s"
+    if a.is_multicast()
+        f = f + "m"
+    if a.is_unique_local()
+        f = f + "U"
+    if a.is_documentation()
+        f = f + "d"
+    if a.is_ipv4_mapped()
+        f = f + "M"
+    if a.is_private()
+        f = f + "p"
+    if str.len(f) == 0
+        "-"
+    else
+        f
+
+fn check4(cases: [Case]) [io]
+    for c in cases
+        test.case(c.input)
+        test.assert_eq_str(flags4(c.input), c.want)
+
+fn check6(cases: [Case]) [io]
+    for c in cases
+        test.case(c.input)
+        test.assert_eq_str(flags6(c.input), c.want)
+
+// ── IPv4, block by block ─────────────────────────────────────────────
+
+@test
+fn test_ipv4_this_network_and_loopback_boundaries() [io]
+    check4([
+        Case { input: "0.0.0.0", want: "up" },
+        Case { input: "0.255.255.255", want: "p" },
+        Case { input: "1.0.0.0", want: "-" },
+        Case { input: "9.255.255.255", want: "-" },
+        Case { input: "10.0.0.0", want: "p" },
+        Case { input: "10.255.255.255", want: "p" },
+        Case { input: "11.0.0.0", want: "-" },
+        Case { input: "126.255.255.255", want: "-" },
+        Case { input: "127.0.0.0", want: "lp" },
+        Case { input: "127.0.0.1", want: "lp" },
+        Case { input: "127.255.255.255", want: "lp" },
+        Case { input: "128.0.0.0", want: "-" }])
+
+@test
+fn test_ipv4_link_local_and_private_boundaries() [io]
+    check4([
+        Case { input: "169.253.255.255", want: "-" },
+        Case { input: "169.254.0.0", want: "Lp" },
+        Case { input: "169.254.255.255", want: "Lp" },
+        Case { input: "169.255.0.0", want: "-" },
+        Case { input: "172.15.255.255", want: "-" },
+        Case { input: "172.16.0.0", want: "p" },
+        Case { input: "172.31.255.255", want: "p" },
+        Case { input: "172.32.0.0", want: "-" },
+        Case { input: "191.255.255.255", want: "-" },
+        Case { input: "192.0.0.0", want: "p" },
+        Case { input: "192.0.0.170", want: "p" },
+        Case { input: "192.0.0.255", want: "p" },
+        Case { input: "192.0.1.0", want: "-" },
+        Case { input: "192.167.255.255", want: "-" },
+        Case { input: "192.168.0.0", want: "p" },
+        Case { input: "192.168.255.255", want: "p" },
+        Case { input: "192.169.0.0", want: "-" },
+        Case { input: "198.17.255.255", want: "-" },
+        Case { input: "198.18.0.0", want: "p" },
+        Case { input: "198.19.255.255", want: "p" },
+        Case { input: "198.20.0.0", want: "-" }])
+
+@test
+fn test_ipv4_documentation_boundaries() [io]
+    check4([
+        Case { input: "192.0.1.255", want: "-" },
+        Case { input: "192.0.2.0", want: "dp" },
+        Case { input: "192.0.2.255", want: "dp" },
+        Case { input: "192.0.3.0", want: "-" },
+        Case { input: "198.51.99.255", want: "-" },
+        Case { input: "198.51.100.0", want: "dp" },
+        Case { input: "198.51.100.255", want: "dp" },
+        Case { input: "198.51.101.0", want: "-" },
+        Case { input: "203.0.112.255", want: "-" },
+        Case { input: "203.0.113.0", want: "dp" },
+        Case { input: "203.0.113.255", want: "dp" },
+        Case { input: "203.0.114.0", want: "-" },
+        Case { input: "203.0.114.1", want: "-" }])
+
+@test
+fn test_ipv4_multicast_reserved_and_broadcast_boundaries() [io]
+    check4([
+        Case { input: "223.255.255.255", want: "-" },
+        Case { input: "224.0.0.0", want: "m" },
+        Case { input: "224.0.0.1", want: "m" },
+        Case { input: "239.255.255.255", want: "m" },
+        Case { input: "240.0.0.0", want: "rp" },
+        Case { input: "255.255.255.254", want: "rp" },
+        // The limited broadcast address is the last reserved address
+        // as well, and both are true of it.
+        Case { input: "255.255.255.255", want: "brp" }])
+
+@test
+fn test_ipv4_ordinary_addresses_are_nothing_in_particular() [io]
+    check4([
+        Case { input: "8.8.8.8", want: "-" },
+        Case { input: "1.1.1.1", want: "-" },
+        // Carrier-grade NAT (100.64.0.0/10) is NOT in CPython 3.10's
+        // private set, which is a surprise worth a line: it is not
+        // globally reachable but `is_private` does not say so.
+        Case { input: "100.64.0.1", want: "-" }])
+
+// ── IPv6, block by block ─────────────────────────────────────────────
+
+@test
+fn test_ipv6_unspecified_loopback_and_mapped_boundaries() [io]
+    check6([
+        Case { input: "::", want: "up" },
+        Case { input: "::1", want: "lp" },
+        Case { input: "::2", want: "-" },
+        // One bit below the mapped prefix is not mapped.
+        Case { input: "::fffe:ffff:ffff", want: "-" },
+        Case { input: "::ffff:0.0.0.0", want: "Mp" },
+        Case { input: "::ffff:255.255.255.255", want: "Mp" },
+        // A bit set in the high half puts it outside ::ffff:0:0/96.
+        Case { input: "0:0:0:1::", want: "-" }])
+
+@test
+fn test_ipv6_documentation_boundaries() [io]
+    check6([
+        Case { input: "2001:db7:ffff:ffff:ffff:ffff:ffff:ffff", want: "-" },
+        Case { input: "2001:db8::", want: "dp" },
+        Case { input: "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff", want: "dp" },
+        Case { input: "2001:db9::", want: "-" }])
+
+@test
+fn test_ipv6_unique_local_link_local_and_site_local_boundaries() [io]
+    check6([
+        Case { input: "fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", want: "-" },
+        Case { input: "fc00::", want: "Up" },
+        Case { input: "fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", want: "Up" },
+        Case { input: "fe00::", want: "-" },
+        Case { input: "fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", want: "-" },
+        Case { input: "fe80::", want: "Lp" },
+        Case { input: "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff", want: "Lp" },
+        // fec0::/10 was site-local until RFC 3879 deprecated it; it is
+        // reported and is NOT private, which is CPython's answer too.
+        Case { input: "fec0::", want: "s" },
+        Case { input: "feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", want: "s" }])
+
+@test
+fn test_ipv6_multicast_boundaries() [io]
+    check6([
+        Case { input: "ff00::", want: "m" },
+        Case { input: "ff02::1", want: "m" },
+        Case { input: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", want: "m" }])
+
+@test
+fn test_ipv6_the_remaining_private_blocks() [io]
+    check6([
+        // 2001::/23 — IETF protocol assignments.  The /23 fixes seven
+        // bits of the second group, so 2001:1ff:: is in and
+        // 2001:200:: is out, which is the boundary a /16 or a /32
+        // would get wrong.
+        Case { input: "2000:ffff:ffff:ffff:ffff:ffff:ffff:ffff", want: "-" },
+        Case { input: "2001::", want: "p" },
+        Case { input: "2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff", want: "p" },
+        Case { input: "2001:200::", want: "-" },
+        Case { input: "2001:ffff:ffff:ffff:ffff:ffff:ffff:ffff", want: "-" },
+        // 2002::/16 — 6to4.
+        Case { input: "2002::", want: "p" },
+        Case { input: "2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff", want: "p" },
+        Case { input: "2003::", want: "-" },
+        // 100::/64 — discard-only.
+        Case { input: "ff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", want: "-" },
+        Case { input: "100::", want: "p" },
+        Case { input: "100::ffff:ffff:ffff:ffff", want: "p" },
+        Case { input: "100:0:0:1::", want: "-" },
+        // 64:ff9b:1::/48 — local-use IPv4/IPv6 translation.  A /48
+        // crosses the middle of the third group, which is the other
+        // boundary a lazy mask gets wrong.
+        Case { input: "64:ff9b:0:ffff:ffff:ffff:ffff:ffff", want: "-" },
+        Case { input: "64:ff9b:1::", want: "p" },
+        Case { input: "64:ff9b:1:ffff:ffff:ffff:ffff:ffff", want: "p" },
+        Case { input: "64:ff9b:2::", want: "-" }])
+
+@test
+fn test_ipv6_ordinary_addresses_are_nothing_in_particular() [io]
+    check6([
+        Case { input: "2606:4700:4700::1111", want: "-" },
+        Case { input: "2a00:1450:4001::1", want: "-" }])
+
+// ── the mapped address carries its family's classification ───────────
+
+@test
+fn test_a_mapped_address_hands_back_the_ipv4_it_carries() [io]
+    let m = ip.ipv4_mapped(ip.ipv4(127, 0, 0, 1))
+    test.assert_true(m.is_ipv4_mapped(), "the constructor builds the mapped form")
+    test.assert_true(m.mapped_ipv4().is_loopback(), "and the IPv4 inside is loopback")
+    test.assert_eq_str(show.addr6(m), "::ffff:127.0.0.1")
+    // The IPv6 address is not itself loopback: `::1` is, and this is
+    // not `::1`.
+    test.assert_false(m.is_loopback(), "::ffff:127.0.0.1 is not ::1")
