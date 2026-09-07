@@ -82,8 +82,9 @@ That check looks for five things, not one. `novo_alloc` is the obvious
 one; `novo_some_int`, `novo_some_float` and the boxed
 `novo_str_byte_at` / `novo_bytes_byte_at` allocate inside the runtime
 with nothing visible in the caller's IR, and a byte scanner is exactly
-where that happens — the toolchain filing is
-`negated-literal-defeats-the-unboxed-byte-read`.
+where that happens. `str.byte_at(s, i) ?? -1` reads a byte without
+boxing one; the compiler's own regression for that is
+`tests/memory/test_unboxed_byte_read_defaults.sh`.
 
 ## What runs on a microcontroller
 

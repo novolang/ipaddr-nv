@@ -638,8 +638,7 @@ fn in6(a: Ipv6, net_hi: Int, net_lo: Int, prefix: Int) -> Bool
 //     println("${a.is_documentation()}")  // true
 // ```
 pub @tier(embedded)
-fn ipv6(g0: Int, g1: Int, g2: Int, g3: Int,
-        g4: Int, g5: Int, g6: Int, g7: Int) -> Ipv6
+fn ipv6(g0: Int, g1: Int, g2: Int, g3: Int, g4: Int, g5: Int, g6: Int, g7: Int) -> Ipv6
     Ipv6 { hi: half(bits.band(g0, 0xFFFF), bits.band(g1, 0xFFFF),
                     bits.band(g2, 0xFFFF), bits.band(g3, 0xFFFF)),
            lo: half(bits.band(g4, 0xFFFF), bits.band(g5, 0xFFFF),
@@ -695,15 +694,7 @@ fn push_group(v: Ipv6, g: Int) -> Ipv6
 // The byte at `i`, or `-1` past either end.
 @tier(app)
 fn byte_of(s: Str, i: Int) -> Int
-    // The default is a BINDING and not the literal `-1`, and that
-    // is load-bearing: `-1` parses as a negation of `1`, and the
-    // compiler's rewrite of `str.byte_at(s, i) ?? d` into the
-    // unboxed read only fires for a literal or a variable.  With
-    // `?? -1` written directly, every byte read boxes a `?Int` on
-    // the heap — one allocation per character scanned.  Filed as
-    // `negated-literal-defeats-the-unboxed-byte-read`.
-    let miss = 0 - 1
-    str.byte_at(s, i) ?? miss
+    str.byte_at(s, i) ?? -1
 
 @tier(embedded)
 fn is_digit(c: Int) -> Bool
@@ -907,13 +898,11 @@ fn parse_ipv6_at(s: Str, from: Int, to: Int) -> Ipv6Parse
         return ipv6_failed(E_EMPTY)
     if find_byte(s, from, to, PERCENT) >= 0
         return ipv6_failed(E_ZONE)
-
     // `k` parts before an embedded IPv4 tail is expanded, `m` after.
     // Two colons is the minimum any legal form writes.
     let k = count_byte(s, from, to, COLON) + 1
     if k < 3
         return ipv6_failed(E_WRONG_PART_COUNT)
-
     let last = part_at(s, from, to, COLON, k - 1)
     var v4 = 0
     var embedded = false
@@ -928,7 +917,6 @@ fn parse_ipv6_at(s: Str, from: Int, to: Int) -> Ipv6Parse
         m = k + 1
     if m > 9
         return ipv6_failed(E_WRONG_PART_COUNT)
-
     // The `::`, if there is one: the empty part strictly between the
     // ends.  An empty part at either end is a lone `:` unless the `::`
     // claims it, which is what the arithmetic below decides.
@@ -939,13 +927,11 @@ fn parse_ipv6_at(s: Str, from: Int, to: Int) -> Ipv6Parse
             if skip >= 0
                 return ipv6_failed(E_REPEATED_DOUBLE_COLON)
             skip = i
-
     let first = part_at(s, from, to, COLON, 0)
     let first_empty = first.stop == first.start
     // The last part of the EXPANDED list is empty only when there was
     // no dotted tail to expand and the written last part was empty.
     let last_empty = not embedded and last.stop == last.start
-
     var lead = 0
     var trail = 0
     var zeros = 0
@@ -969,7 +955,6 @@ fn parse_ipv6_at(s: Str, from: Int, to: Int) -> Ipv6Parse
         if first_empty or last_empty
             return ipv6_failed(E_LONE_COLON)
         lead = 8
-
     var v = Ipv6 { hi: 0, lo: 0 }
     for i in 0 .. lead
         let g = group_at(s, from, to, k, embedded, v4, i)
@@ -991,8 +976,7 @@ fn parse_ipv6_at(s: Str, from: Int, to: Int) -> Ipv6Parse
 // gone and the two groups of `v4` stand in its place, so the list is
 // one longer than what the colons say.
 @tier(app)
-fn group_at(s: Str, from: Int, to: Int, k: Int,
-            embedded: Bool, v4: Int, idx: Int) -> Int
+fn group_at(s: Str, from: Int, to: Int, k: Int, embedded: Bool, v4: Int, idx: Int) -> Int
     if embedded and idx == k - 1
         return bits.band(bits.shr(v4, 16), 0xFFFF)
     if embedded and idx == k
@@ -1267,7 +1251,10 @@ fn write_ipv6(dst: Bytes, off: Int, a: Ipv6) -> Bytes
         buf = bytes.set_u8(buf, at, COLON)
         buf = bytes.set_u8(buf, at + 1, COLON)
         at = at + 2
-    let tail_from = if rs < 0 then 0 else rs + zero_run_len(a)
+    let tail_from = if rs < 0
+        0
+    else
+        rs + zero_run_len(a)
     for i in tail_from .. 8
         if i > tail_from
             buf = bytes.set_u8(buf, at, COLON)

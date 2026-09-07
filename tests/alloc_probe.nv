@@ -24,8 +24,10 @@ fn addresses(text: Str, buf: Bytes) -> Int
     if p4.is_ok() and q4.is_ok()
         score = score + 1
     match p4.error()
-        Some(_) => score = score + 2
-        None => score = score + 3
+        Some(_) =>
+            score = score + 2
+        None    =>
+            score = score + 3
     let a: Ipv4 = p4.addr
     score = score + a.to_int() + a.octet(0) + a.cmp(ip.ipv4(10, 0, 0, 1))
     if a.eq(ip.ipv4_from_int(a.to_int()))
@@ -38,14 +40,15 @@ fn addresses(text: Str, buf: Bytes) -> Int
         score = score + 1
     if ip.ipv4_zero().is_unspecified()
         score = score + 1
-
     let p6 = ip.parse_ipv6("2001:db8::1")
     let q6 = ip.parse_ipv6_at("[2001:db8::1]", 1, 12)
     if p6.is_ok() and q6.is_ok()
         score = score + 1
     match p6.error()
-        Some(_) => score = score + 2
-        None => score = score + 3
+        Some(_) =>
+            score = score + 2
+        None    =>
+            score = score + 3
     let s: Ipv6 = p6.addr
     score = score + s.group(0) + s.octet(1) + s.cmp(ip.ipv6_zero())
     if s.eq(ip.ipv6_from_halves(s.hi, s.lo))
@@ -62,9 +65,10 @@ fn addresses(text: Str, buf: Bytes) -> Int
     if ip.ipv6_zero().is_unspecified()
         score = score + 1
     match ip.error_of(1)
-        Some(_) => score = score + 1
-        None => score = score + 2
-
+        Some(_) =>
+            score = score + 1
+        None    =>
+            score = score + 2
     // Formatting into a buffer the caller already owns, and the two
     // length calls that size it.
     var out = buf
@@ -86,8 +90,10 @@ fn networks(text: Str) -> Int
     if p.is_ok() and q.is_ok()
         score = score + 1
     match p.error()
-        Some(_) => score = score + 2
-        None => score = score + 3
+        Some(_) =>
+            score = score + 2
+        None    =>
+            score = score + 3
     let n: Net4 = q.net
     score = score + n.network().to_int() + n.broadcast().to_int()
     score = score + n.netmask().to_int() + n.hostmask().to_int()
@@ -99,14 +105,15 @@ fn networks(text: Str) -> Int
     let b: Net4 = built.net
     if n.overlaps(b)
         score = score + 1
-
     let p6 = cidr.parse_net6("2001:db8::/32", true)
     let q6 = cidr.parse_net6("2001:db8::1/32", false)
     if p6.is_ok() and q6.is_ok()
         score = score + 1
     match p6.error()
-        Some(_) => score = score + 2
-        None => score = score + 3
+        Some(_) =>
+            score = score + 2
+        None    =>
+            score = score + 3
     let n6: Net6 = p6.net
     score = score + n6.network().group(0) + n6.last_address().group(7)
     score = score + n6.netmask().group(0) + n6.hostmask().group(7)

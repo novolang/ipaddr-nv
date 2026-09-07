@@ -36,7 +36,6 @@ use cidr
 @tier(rt)
 fn score() -> Int
     var n = 0
-
     // Construction and the accessors.
     let a = ip.ipv4(192, 0, 2, 1)
     if a.to_int() == 3221225985
@@ -47,7 +46,6 @@ fn score() -> Int
         n = n + 1
     if ip.ipv4_zero().is_unspecified()
         n = n + 1
-
     // Classification, IPv4.
     if ip.ipv4(127, 0, 0, 1).is_loopback() and ip.ipv4(10, 1, 1, 1).is_private()
         n = n + 1
@@ -57,7 +55,6 @@ fn score() -> Int
         n = n + 1
     if a.is_documentation() and not ip.ipv4(8, 8, 8, 8).is_private()
         n = n + 1
-
     // The IPv6 halves: 64-bit shifts and masks on a 32-bit core.
     let s = ip.ipv6(0x2001, 0x0DB8, 0, 0, 0, 0, 0, 1)
     if s.group(0) == 0x2001 and s.group(1) == 0x0DB8 and s.group(7) == 1
@@ -78,25 +75,21 @@ fn score() -> Int
         n = n + 1
     if ip.ipv6(0xFEC0, 0, 0, 0, 0, 0, 0, 1).is_site_local()
         n = n + 1
-
     // The comparison that reads all 128 bits as unsigned — the one an
     // Int comparison gets backwards whenever the top bit is set.
     if ip.ipv6(0xFF00, 0, 0, 0, 0, 0, 0, 0).cmp(ip.ipv6_from_halves(0, 1)) == 1
         n = n + 1
     if a.cmp(ip.ipv4(192, 0, 2, 2)) == 0 - 1
         n = n + 1
-
     // The mapped form, which is what a dual-stack socket hands up.
     let m = ip.ipv4_mapped(a)
     if m.is_ipv4_mapped() and m.mapped_ipv4().eq(a)
         n = n + 1
-
     // The lengths a caller would size a buffer with, computed without
     // one: `ipv4_len` and `ipv6_len` are `Int` algebra and reach the
     // device even though `write_ipv4` does not.
     if ip.ipv4_len(a) == 9 and ip.ipv6_len(s) == 11
         n = n + 1
-
     // CIDR: the arithmetic a routing table is.
     let built = cidr.net4(ip.ipv4(192, 0, 2, 5), 24)
     if built.is_ok()
@@ -119,7 +112,6 @@ fn score() -> Int
             n = n + 1
         if block.overlaps(cidr.net4(ip.ipv4(192, 0, 0, 0), 16).net)
             n = n + 1
-
     let six = cidr.net6(s, 32)
     if six.is_ok()
         let block6: Net6 = six.net

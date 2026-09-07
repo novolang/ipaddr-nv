@@ -47,18 +47,18 @@ fn dump6(input: Str, strict: Bool) -> Str
 
 fn reason_name(e: IpError) -> Str
     match e
-        Empty => "Empty"
-        BadCharacter => "BadCharacter"
-        WrongPartCount => "WrongPartCount"
-        PartTooLong => "PartTooLong"
-        EmptyPart => "EmptyPart"
-        LeadingZero => "LeadingZero"
-        OctetOutOfRange => "OctetOutOfRange"
-        RepeatedDoubleColon => "RepeatedDoubleColon"
-        LoneColon => "LoneColon"
-        ZoneUnsupported => "ZoneUnsupported"
-        BadPrefixLength => "BadPrefixLength"
-        HostBitsSet => "HostBitsSet"
+        Empty                  => "Empty"
+        BadCharacter           => "BadCharacter"
+        WrongPartCount         => "WrongPartCount"
+        PartTooLong            => "PartTooLong"
+        EmptyPart              => "EmptyPart"
+        LeadingZero            => "LeadingZero"
+        OctetOutOfRange        => "OctetOutOfRange"
+        RepeatedDoubleColon    => "RepeatedDoubleColon"
+        LoneColon              => "LoneColon"
+        ZoneUnsupported        => "ZoneUnsupported"
+        BadPrefixLength        => "BadPrefixLength"
+        HostBitsSet            => "HostBitsSet"
         NetmaskFormUnsupported => "NetmaskFormUnsupported"
 
 // ── IPv4 networks that parse ─────────────────────────────────────────
@@ -303,5 +303,5 @@ fn test_a_network_can_be_built_from_an_address_and_a_length() [io]
     // The reason travels with the failure.
     match cidr.net4(ip.ipv4_zero(), 99).error()
         Some(BadPrefixLength) => test.assert(true)
-        Some(_) => test.fail("the wrong reason")
-        None => test.fail("no reason at all")
+        Some(_)               => test.fail("the wrong reason")
+        None                  => test.fail("no reason at all")

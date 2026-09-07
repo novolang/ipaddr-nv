@@ -57,18 +57,18 @@ fn v6(input: Str) -> Str
 // person; a table wants the name of the thing.
 fn reason_name(e: IpError) -> Str
     match e
-        Empty => "Empty"
-        BadCharacter => "BadCharacter"
-        WrongPartCount => "WrongPartCount"
-        PartTooLong => "PartTooLong"
-        EmptyPart => "EmptyPart"
-        LeadingZero => "LeadingZero"
-        OctetOutOfRange => "OctetOutOfRange"
-        RepeatedDoubleColon => "RepeatedDoubleColon"
-        LoneColon => "LoneColon"
-        ZoneUnsupported => "ZoneUnsupported"
-        BadPrefixLength => "BadPrefixLength"
-        HostBitsSet => "HostBitsSet"
+        Empty                  => "Empty"
+        BadCharacter           => "BadCharacter"
+        WrongPartCount         => "WrongPartCount"
+        PartTooLong            => "PartTooLong"
+        EmptyPart              => "EmptyPart"
+        LeadingZero            => "LeadingZero"
+        OctetOutOfRange        => "OctetOutOfRange"
+        RepeatedDoubleColon    => "RepeatedDoubleColon"
+        LoneColon              => "LoneColon"
+        ZoneUnsupported        => "ZoneUnsupported"
+        BadPrefixLength        => "BadPrefixLength"
+        HostBitsSet            => "HostBitsSet"
         NetmaskFormUnsupported => "NetmaskFormUnsupported"
 
 fn check4(cases: [Case]) [io]

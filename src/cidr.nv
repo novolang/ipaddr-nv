@@ -347,15 +347,7 @@ fn net6_failed(code: Int) -> Net6Parse
 // The byte at `i`, or `-1` past either end.
 @tier(app)
 fn byte_of(s: Str, i: Int) -> Int
-    // The default is a BINDING and not the literal `-1`, and that
-    // is load-bearing: `-1` parses as a negation of `1`, and the
-    // compiler's rewrite of `str.byte_at(s, i) ?? d` into the
-    // unboxed read only fires for a literal or a variable.  With
-    // `?? -1` written directly, every byte read boxes a `?Int` on
-    // the heap — one allocation per character scanned.  Filed as
-    // `negated-literal-defeats-the-unboxed-byte-read`.
-    let miss = 0 - 1
-    str.byte_at(s, i) ?? miss
+    str.byte_at(s, i) ?? -1
 
 // The index of the only `/` in `s`, `-1` when there is none, or `-2`
 // when there is more than one.
@@ -419,7 +411,10 @@ fn parse_net4(s: Str, strict: Bool) -> Net4Parse
     let cut = slash_index(s, n)
     if cut == -2
         return net4_failed(E_BAD_PREFIX)
-    let stop = if cut < 0 then n else cut
+    let stop = if cut < 0
+        n
+    else
+        cut
     let p4 = ip.parse_ipv4_at(s, 0, stop)
     if not p4.is_ok()
         return net4_failed(p4.err)
@@ -456,7 +451,10 @@ fn parse_net6(s: Str, strict: Bool) -> Net6Parse
     let cut = slash_index(s, n)
     if cut == -2
         return net6_failed(E_BAD_PREFIX)
-    let stop = if cut < 0 then n else cut
+    let stop = if cut < 0
+        n
+    else
+        cut
     let p6 = ip.parse_ipv6_at(s, 0, stop)
     if not p6.is_ok()
         return net6_failed(p6.err)

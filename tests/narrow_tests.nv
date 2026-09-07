@@ -44,13 +44,13 @@ fn test_a_zone_identifier_is_refused_rather_than_carried() [io]
         test.assert_false(p.is_ok(), "a zone identifier does not parse")
         match p.error()
             Some(ZoneUnsupported) => test.assert(true)
-            Some(_) => test.fail("refused, but for the wrong reason")
-            None => test.fail("accepted")
+            Some(_)               => test.fail("refused, but for the wrong reason")
+            None                  => test.fail("accepted")
     // And through a network, where CPython would have taken it as well.
     match cidr.parse_net6("fe80::1%eth0/64", false).error()
         Some(ZoneUnsupported) => test.assert(true)
-        Some(_) => test.fail("refused, but for the wrong reason")
-        None => test.fail("accepted")
+        Some(_)               => test.fail("refused, but for the wrong reason")
+        None                  => test.fail("accepted")
 
 // ── 2. RFC 5952 § 5 against CPython's formatter ──────────────────────
 
@@ -108,8 +108,8 @@ fn test_a_dotted_netmask_is_refused_rather_than_read() [io]
         test.case(c)
         match cidr.parse_net4(c, false).error()
             Some(NetmaskFormUnsupported) => test.assert(true)
-            Some(_) => test.fail("refused, but for the wrong reason")
-            None => test.fail("accepted")
+            Some(_)                      => test.fail("refused, but for the wrong reason")
+            None                         => test.fail("accepted")
     // The prefix-length spelling of the same network is taken.
     let p = cidr.parse_net4("192.0.2.0/24", true)
     let block: Net4 = p.net

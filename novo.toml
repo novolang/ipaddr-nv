@@ -8,7 +8,7 @@ category    = "networking"
 tags        = ["ip", "ipv4", "ipv6", "cidr", "ipaddress", "rfc5952", "rfc4291", "subnet"]
 repository  = "https://github.com/novolang/ipaddr-nv"
 maintainers = ["novo-lang"]
-novo        = ">= 0.8.4"
+novo        = ">= 0.8.5"
 
 # A library: no `main`, so `novo pkg build` type-checks and
 # effect-checks every module under `src/` and writes no binary.
