@@ -1,10 +1,11 @@
 [package]
 name        = "ipaddr-nv"
-version     = "0.1.0"
+version     = "0.1.1"
 description = "IP addresses and CIDR networks as value types: an IPv4 or IPv6 address parses into a struct that lives on the stack, formats back out under RFC 5952, classifies itself against the special-purpose registry, and converts to bytes and integers without touching the heap."
 license     = "Apache-2.0"
 stability   = "experimental"
 category    = "networking"
+layer       = "core"
 tags        = ["ip", "ipv4", "ipv6", "cidr", "ipaddress", "rfc5952", "rfc4291", "subnet"]
 repository  = "https://github.com/novolang/ipaddr-nv"
 maintainers = ["novo-lang"]

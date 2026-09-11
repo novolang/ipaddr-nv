@@ -116,12 +116,12 @@ fn test_the_length_a_caller_sizes_a_buffer_with_is_the_length_written() [io]
     // `ipv4_len` and `ipv6_len` are what a caller with its own buffer
     // asks first.  A promise one byte short is a buffer overrun, and
     // one byte long is a trailing NUL in the middle of a config file.
-    for k in 0 .. 400
+    for k in 0..400
         let v = k * 10737418 % 4294967296
         let a = ip.ipv4_from_int(v)
         test.case(show.addr4(a))
         test.assert_eq(str.len(show.addr4(a)), ip.ipv4_len(a))
-    for p in 0 .. 256
+    for p in 0..256
         let a = pattern(p)
         test.case(show.addr6(a))
         test.assert_eq(str.len(show.addr6(a)), ip.ipv6_len(a))
@@ -132,7 +132,7 @@ fn test_the_length_a_caller_sizes_a_buffer_with_is_the_length_written() [io]
 fn test_every_zero_run_pattern_round_trips() [io]
     // 256 patterns: for each of the eight groups, zero or not.  That
     // is the whole space § 4.2 legislates over.
-    for p in 0 .. 256
+    for p in 0..256
         let a = pattern(p)
         let text = show.addr6(a)
         test.case(text)
@@ -146,7 +146,7 @@ fn test_every_zero_run_pattern_round_trips() [io]
 
 @test
 fn test_the_generated_text_obeys_the_lexical_rules() [io]
-    for p in 0 .. 256
+    for p in 0..256
         let a = pattern(p)
         let text = show.addr6(a)
         test.case(text)
@@ -157,7 +157,7 @@ fn test_the_generated_text_obeys_the_lexical_rules() [io]
 
 @test
 fn test_every_ipv4_address_in_a_stride_round_trips() [io]
-    for k in 0 .. 600
+    for k in 0..600
         let v = k * 7158278 % 4294967296
         let a = ip.ipv4_from_int(v)
         let text = show.addr4(a)
@@ -204,7 +204,7 @@ fn group_for(p: Int, i: Int, value: Int) -> Int
         0
 
 fn is_lower_hex_only(s: Str) -> Bool
-    for i in 0 .. str.len(s)
+    for i in 0..str.len(s)
         let c = str.byte_at(s, i) ?? 0
         if c >= 65 and c <= 90
             return false
@@ -213,7 +213,7 @@ fn is_lower_hex_only(s: Str) -> Bool
 // True when some group is written with a leading `0` — that is, a `0`
 // that is followed by another hex digit rather than standing alone.
 fn has_leading_zero_group(s: Str) -> Bool
-    for i in 0 .. str.len(s)
+    for i in 0..str.len(s)
         let c = str.byte_at(s, i) ?? 0
         if c == 48
             let before = if i == 0
@@ -227,7 +227,7 @@ fn has_leading_zero_group(s: Str) -> Bool
 
 fn double_colons(s: Str) -> Int
     var n = 0
-    for i in 0 .. str.len(s) - 1
+    for i in 0..str.len(s) - 1
         if (str.byte_at(s, i) ?? 0) == 58 and (str.byte_at(s, i + 1) ?? 0) == 58
             n = n + 1
     n
@@ -239,7 +239,7 @@ fn double_colons(s: Str) -> Int
 fn elided_groups(a: Ipv6, text: Str) -> Int
     var written = 0
     var in_run = false
-    for i in 0 .. str.len(text)
+    for i in 0..str.len(text)
         let c = str.byte_at(text, i) ?? 0
         if c == 58
             in_run = false

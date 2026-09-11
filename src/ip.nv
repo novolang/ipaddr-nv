@@ -279,7 +279,7 @@ impl Ipv6Parse
 // The low 32 bits of `x`.
 @tier(embedded)
 fn low32(x: Int) -> Int
-    bits.band(x, 0xFFFFFFFF)
+    x & 0xFFFFFFFF
 
 // A 32-bit mask with the top `p` bits set, for `p` in `0 ..= 32`.
 //
@@ -288,7 +288,7 @@ fn low32(x: Int) -> Int
 // it, so neither end needs a case of its own.
 @tier(embedded)
 fn mask32(p: Int) -> Int
-    low32(bits.shl(0xFFFFFFFF, 32 - p))
+    low32(0xFFFFFFFF << (32 - p))
 
 // A 64-bit mask with the top `k` bits set.
 //
@@ -301,15 +301,14 @@ fn mask64(k: Int) -> Int
     if k <= 0
         0
     else if k >= 64
-        bits.bnot(0)
+        ~0
     else
-        bits.shl(bits.bnot(0), 64 - k)
+        ~0 << (64 - k)
 
 // The 64-bit half four 16-bit groups spell, most significant first.
 @tier(embedded)
 fn half(g0: Int, g1: Int, g2: Int, g3: Int) -> Int
-    bits.bor(bits.bor(bits.shl(g0, 48), bits.shl(g1, 32)),
-             bits.bor(bits.shl(g2, 16), g3))
+    (g0 << 48) | (g1 << 32) | ((g2 << 16) | g3)
 
 // Compare two 64-bit words as UNSIGNED: `-1`, `0` or `1`.
 //
@@ -319,8 +318,8 @@ fn half(g0: Int, g1: Int, g2: Int, g3: Int) -> Int
 // the signed one exactly.
 @tier(embedded)
 fn cmp_u64(a: Int, b: Int) -> Int
-    let fa = bits.xor(a, bits.shl(1, 63))
-    let fb = bits.xor(b, bits.shl(1, 63))
+    let fa = a ^ (1 << 63)
+    let fb = b ^ (1 << 63)
     if fa < fb
         -1
     else if fa > fb
@@ -338,7 +337,7 @@ impl Ipv4
         if i < 0 or i > 3
             0
         else
-            bits.band(bits.shr(self.raw, 24 - 8 * i), 0xFF)
+            (self.raw >>> (24 - 8 * i)) & 0xFF
 
     // The address as the 32-bit number it spells, in `0 ..= 4294967295`.
     @tier(embedded)
@@ -451,7 +450,7 @@ impl Ipv4
 // already masked, which every caller above writes out in full.
 @tier(embedded)
 fn in4(raw: Int, net: Int, prefix: Int) -> Bool
-    bits.band(raw, mask32(prefix)) == net
+    (raw & mask32(prefix)) == net
 
 // The address the four octets spell.
 //
@@ -470,10 +469,7 @@ fn in4(raw: Int, net: Int, prefix: Int) -> Bool
 // ```
 pub @tier(embedded)
 fn ipv4(a: Int, b: Int, c: Int, d: Int) -> Ipv4
-    Ipv4 { raw: bits.bor(bits.bor(bits.shl(bits.band(a, 0xFF), 24),
-                                 bits.shl(bits.band(b, 0xFF), 16)),
-                         bits.bor(bits.shl(bits.band(c, 0xFF), 8),
-                                  bits.band(d, 0xFF))) }
+    Ipv4 { raw: ((a & 0xFF) << 24) | ((b & 0xFF) << 16) | (((c & 0xFF) << 8) | (d & 0xFF)) }
 
 // The address a 32-bit number spells, masked to its low 32 bits.
 //
@@ -500,9 +496,9 @@ impl Ipv6
         if i < 0 or i > 7
             0
         else if i < 4
-            bits.band(bits.shr(self.hi, 48 - 16 * i), 0xFFFF)
+            (self.hi >>> (48 - 16 * i)) & 0xFFFF
         else
-            bits.band(bits.shr(self.lo, 48 - 16 * (i - 4)), 0xFFFF)
+            (self.lo >>> (48 - 16 * (i - 4))) & 0xFFFF
 
     // Octet `i`, counting from the left.  An index outside `0 ..= 15`
     // answers 0.
@@ -511,9 +507,9 @@ impl Ipv6
         if i < 0 or i > 15
             0
         else if i < 8
-            bits.band(bits.shr(self.hi, 56 - 8 * i), 0xFF)
+            (self.hi >>> (56 - 8 * i)) & 0xFF
         else
-            bits.band(bits.shr(self.lo, 56 - 8 * (i - 8)), 0xFF)
+            (self.lo >>> (56 - 8 * (i - 8))) & 0xFF
 
     // True when the two addresses are the same one.
     @tier(embedded)
@@ -543,25 +539,25 @@ impl Ipv6
     // True inside `ff00::/8`.
     @tier(embedded)
     fn is_multicast(self) -> Bool
-        bits.band(self.group(0), 0xFF00) == 0xFF00
+        (self.group(0) & 0xFF00) == 0xFF00
 
     // True inside `fe80::/10`.
     @tier(embedded)
     fn is_link_local(self) -> Bool
-        bits.band(self.group(0), 0xFFC0) == 0xFE80
+        (self.group(0) & 0xFFC0) == 0xFE80
 
     // True inside `fec0::/10`, the site-local prefix RFC 3879
     // deprecated in 2004.  Reported because packets carrying one still
     // arrive, not because anything should send one.
     @tier(embedded)
     fn is_site_local(self) -> Bool
-        bits.band(self.group(0), 0xFFC0) == 0xFEC0
+        (self.group(0) & 0xFFC0) == 0xFEC0
 
     // True inside `fc00::/7`, the unique-local block — IPv6's answer
     // to `10.0.0.0/8`.
     @tier(embedded)
     fn is_unique_local(self) -> Bool
-        bits.band(self.group(0), 0xFE00) == 0xFC00
+        (self.group(0) & 0xFE00) == 0xFC00
 
     // True inside `2001:db8::/32`, the block RFC 3849 set aside for
     // documentation and examples.
@@ -573,7 +569,7 @@ impl Ipv6
     // address through an IPv6 socket.
     @tier(embedded)
     fn is_ipv4_mapped(self) -> Bool
-        self.hi == 0 and bits.shr(self.lo, 32) == 0xFFFF
+        self.hi == 0 and (self.lo >>> 32) == 0xFFFF
 
     // The IPv4 address this one carries, when `is_ipv4_mapped()` is
     // true.  Answers `0.0.0.0` when it is not, so check first.
@@ -621,8 +617,8 @@ impl Ipv6
 // `net_hi` and `net_lo` and whose prefix is `prefix`.
 @tier(embedded)
 fn in6(a: Ipv6, net_hi: Int, net_lo: Int, prefix: Int) -> Bool
-    bits.band(a.hi, mask64(prefix)) == net_hi
-        and bits.band(a.lo, mask64(prefix - 64)) == net_lo
+    (a.hi & mask64(prefix)) == net_hi
+        and (a.lo & mask64(prefix - 64)) == net_lo
 
 // The address the eight groups spell, most significant first.
 //
@@ -639,10 +635,10 @@ fn in6(a: Ipv6, net_hi: Int, net_lo: Int, prefix: Int) -> Bool
 // ```
 pub @tier(embedded)
 fn ipv6(g0: Int, g1: Int, g2: Int, g3: Int, g4: Int, g5: Int, g6: Int, g7: Int) -> Ipv6
-    Ipv6 { hi: half(bits.band(g0, 0xFFFF), bits.band(g1, 0xFFFF),
-                    bits.band(g2, 0xFFFF), bits.band(g3, 0xFFFF)),
-           lo: half(bits.band(g4, 0xFFFF), bits.band(g5, 0xFFFF),
-                    bits.band(g6, 0xFFFF), bits.band(g7, 0xFFFF)) }
+    Ipv6 { hi: half(g0 & 0xFFFF, g1 & 0xFFFF,
+                    g2 & 0xFFFF, g3 & 0xFFFF),
+           lo: half(g4 & 0xFFFF, g5 & 0xFFFF,
+                    g6 & 0xFFFF, g7 & 0xFFFF) }
 
 // The address two 64-bit halves spell.
 //
@@ -671,7 +667,7 @@ fn ipv6_zero() -> Ipv6
 // ```
 pub @tier(embedded)
 fn ipv4_mapped(a: Ipv4) -> Ipv6
-    Ipv6 { hi: 0, lo: bits.bor(bits.shl(0xFFFF, 32), a.raw) }
+    Ipv6 { hi: 0, lo: (0xFFFF << 32) | a.raw }
 
 // Push one 16-bit group onto the right of a 128-bit accumulator.
 //
@@ -680,8 +676,8 @@ fn ipv4_mapped(a: Ipv4) -> Ipv6
 // parser is the only caller and does exactly eight.
 @tier(embedded)
 fn push_group(v: Ipv6, g: Int) -> Ipv6
-    Ipv6 { hi: bits.bor(bits.shl(v.hi, 16), bits.shr(v.lo, 48)),
-           lo: bits.bor(bits.shl(v.lo, 16), bits.band(g, 0xFFFF)) }
+    Ipv6 { hi: (v.hi << 16) | (v.lo >>> 48),
+           lo: (v.lo << 16) | (g & 0xFFFF) }
 
 // ── reading bytes ────────────────────────────────────────────────────
 //
@@ -715,7 +711,7 @@ fn hex_value(c: Int) -> Int
 // The first index in `[from, to)` holding `target`, or `-1`.
 @tier(app)
 fn find_byte(s: Str, from: Int, to: Int, target: Int) -> Int
-    for i in from .. to
+    for i in from..to
         if byte_of(s, i) == target
             return i
     -1
@@ -724,7 +720,7 @@ fn find_byte(s: Str, from: Int, to: Int, target: Int) -> Int
 @tier(app)
 fn count_byte(s: Str, from: Int, to: Int, target: Int) -> Int
     var n = 0
-    for i in from .. to
+    for i in from..to
         if byte_of(s, i) == target
             n = n + 1
     n
@@ -747,7 +743,7 @@ struct Part
 fn part_at(s: Str, from: Int, to: Int, sep: Int, idx: Int) -> Part
     var seen = 0
     var start = from
-    for i in from .. to
+    for i in from..to
         if byte_of(s, i) == sep
             if seen == idx
                 return Part { start: start, stop: i }
@@ -771,7 +767,7 @@ fn part_at(s: Str, from: Int, to: Int, sep: Int, idx: Int) -> Part
 fn octet_value(s: Str, from: Int, to: Int) -> Int
     if to <= from
         return 0 - E_EMPTY_PART
-    for i in from .. to
+    for i in from..to
         if not is_digit(byte_of(s, i))
             return 0 - E_BAD_CHARACTER
     if to - from > 3
@@ -779,7 +775,7 @@ fn octet_value(s: Str, from: Int, to: Int) -> Int
     if to - from > 1 and byte_of(s, from) == D_ZERO
         return 0 - E_LEADING_ZERO
     var value = 0
-    for i in from .. to
+    for i in from..to
         value = value * 10 + (byte_of(s, i) - D_ZERO)
     if value > 255
         return 0 - E_OCTET_RANGE
@@ -808,7 +804,7 @@ fn parse_ipv4_at(s: Str, from: Int, to: Int) -> Ipv4Parse
     if count_byte(s, from, to, DOT) != 3
         return ipv4_failed(E_WRONG_PART_COUNT)
     var raw = 0
-    for idx in 0 .. 4
+    for idx in 0..4
         let p = part_at(s, from, to, DOT, idx)
         let v = octet_value(s, p.start, p.stop)
         if v < 0
@@ -856,13 +852,13 @@ fn ipv6_failed(code: Int) -> Ipv6Parse
 fn hextet_value(s: Str, from: Int, to: Int) -> Int
     if to <= from
         return 0 - E_LONE_COLON
-    for i in from .. to
+    for i in from..to
         if hex_value(byte_of(s, i)) < 0
             return 0 - E_BAD_CHARACTER
     if to - from > 4
         return 0 - E_PART_TOO_LONG
     var value = 0
-    for i in from .. to
+    for i in from..to
         value = value * 16 + hex_value(byte_of(s, i))
     value
 
@@ -921,7 +917,7 @@ fn parse_ipv6_at(s: Str, from: Int, to: Int) -> Ipv6Parse
     // ends.  An empty part at either end is a lone `:` unless the `::`
     // claims it, which is what the arithmetic below decides.
     var skip = -1
-    for i in 1 .. k - 1
+    for i in 1..k - 1
         let p = part_at(s, from, to, COLON, i)
         if p.stop == p.start
             if skip >= 0
@@ -956,14 +952,14 @@ fn parse_ipv6_at(s: Str, from: Int, to: Int) -> Ipv6Parse
             return ipv6_failed(E_LONE_COLON)
         lead = 8
     var v = Ipv6 { hi: 0, lo: 0 }
-    for i in 0 .. lead
+    for i in 0..lead
         let g = group_at(s, from, to, k, embedded, v4, i)
         if g < 0
             return ipv6_failed(0 - g)
         v = push_group(v, g)
-    for _z in 0 .. zeros
+    for _z in 0..zeros
         v = push_group(v, 0)
-    for i in m - trail .. m
+    for i in m - trail..m
         let g = group_at(s, from, to, k, embedded, v4, i)
         if g < 0
             return ipv6_failed(0 - g)
@@ -978,9 +974,9 @@ fn parse_ipv6_at(s: Str, from: Int, to: Int) -> Ipv6Parse
 @tier(app)
 fn group_at(s: Str, from: Int, to: Int, k: Int, embedded: Bool, v4: Int, idx: Int) -> Int
     if embedded and idx == k - 1
-        return bits.band(bits.shr(v4, 16), 0xFFFF)
+        return (v4 >>> 16) & 0xFFFF
     if embedded and idx == k
-        return bits.band(v4, 0xFFFF)
+        return v4 & 0xFFFF
     let p = part_at(s, from, to, COLON, idx)
     hextet_value(s, p.start, p.stop)
 
@@ -1016,7 +1012,7 @@ fn parse_ipv6(s: Str) -> Ipv6Parse
 // use ip
 //
 // fn main() [io]
-//     let packet = bytes.from_hex("c0000201")
+//     let packet = bytes.from_hex("c0000201") ?? bytes.zeros(4)
 //     println("${ip.ipv4_from_bytes(packet, 0).to_int()}")   // 3221225985
 // ```
 pub @tier(app)
@@ -1034,7 +1030,7 @@ fn ipv4_from_bytes(src: Bytes, off: Int) -> Ipv4
 pub @tier(app)
 fn ipv4_to_bytes(dst: Bytes, off: Int, a: Ipv4) -> Bytes
     var buf = dst
-    for i in 0 .. 4
+    for i in 0..4
         buf = bytes.set_u8(buf, off + i, a.octet(i))
     buf
 
@@ -1045,9 +1041,8 @@ fn ipv4_to_bytes(dst: Bytes, off: Int, a: Ipv4) -> Bytes
 pub @tier(app)
 fn ipv6_from_bytes(src: Bytes, off: Int) -> Ipv6
     var v = Ipv6 { hi: 0, lo: 0 }
-    for i in 0 .. 8
-        let g = bits.bor(bits.shl(bytes.byte_at(src, off + 2 * i) ?? 0, 8),
-                         bytes.byte_at(src, off + 2 * i + 1) ?? 0)
+    for i in 0..8
+        let g = ((bytes.byte_at(src, off + 2 * i) ?? 0) << 8) | (bytes.byte_at(src, off + 2 * i + 1) ?? 0)
         v = push_group(v, g)
     v
 
@@ -1056,7 +1051,7 @@ fn ipv6_from_bytes(src: Bytes, off: Int) -> Ipv6
 pub @tier(app)
 fn ipv6_to_bytes(dst: Bytes, off: Int, a: Ipv6) -> Bytes
     var buf = dst
-    for i in 0 .. 16
+    for i in 0..16
         buf = bytes.set_u8(buf, off + i, a.octet(i))
     buf
 
@@ -1081,7 +1076,7 @@ fn digits_of(v: Int) -> Int
 pub @tier(embedded)
 fn ipv4_len(a: Ipv4) -> Int
     var n = 3
-    for i in 0 .. 4
+    for i in 0..4
         n = n + digits_of(a.octet(i))
     n
 
@@ -1104,13 +1099,13 @@ pub @tier(app)
 fn write_ipv4(dst: Bytes, off: Int, a: Ipv4) -> Bytes
     var buf = dst
     var at = off
-    for i in 0 .. 4
+    for i in 0..4
         if i > 0
             buf = bytes.set_u8(buf, at, DOT)
             at = at + 1
         let v = a.octet(i)
         let w = digits_of(v)
-        for d in 0 .. w
+        for d in 0..w
             buf = bytes.set_u8(buf, at + w - 1 - d, D_ZERO + digit_at(v, d))
         at = at + w
     buf
@@ -1119,7 +1114,7 @@ fn write_ipv4(dst: Bytes, off: Int, a: Ipv4) -> Bytes
 @tier(embedded)
 fn digit_at(v: Int, d: Int) -> Int
     var x = v
-    for _i in 0 .. d
+    for _i in 0..d
         x = x / 10
     x % 10
 
@@ -1136,7 +1131,7 @@ fn zero_run_start(a: Ipv6) -> Int
     var best_len = 1
     var start = -1
     var len = 0
-    for i in 0 .. 8
+    for i in 0..8
         if a.group(i) == 0
             if start < 0
                 start = i
@@ -1156,7 +1151,7 @@ fn zero_run_len(a: Ipv6) -> Int
     if s < 0
         return 0
     var n = 0
-    for i in s .. 8
+    for i in s..8
         if a.group(i) != 0
             return n
         n = n + 1
@@ -1187,16 +1182,16 @@ fn ipv6_len(a: Ipv6) -> Int
     let rs = zero_run_start(a)
     if rs < 0
         var n = 7
-        for i in 0 .. 8
+        for i in 0..8
             n = n + hex_digits_of(a.group(i))
         return n
     let after = rs + zero_run_len(a)
     var n = 2
-    for i in 0 .. rs
+    for i in 0..rs
         n = n + hex_digits_of(a.group(i))
         if i > 0
             n = n + 1
-    for i in after .. 8
+    for i in after..8
         n = n + hex_digits_of(a.group(i))
         if i > after
             n = n + 1
@@ -1231,7 +1226,7 @@ pub @tier(app)
 fn write_ipv6(dst: Bytes, off: Int, a: Ipv6) -> Bytes
     if a.is_ipv4_mapped()
         var head = dst
-        for j in 0 .. 7
+        for j in 0..7
             head = bytes.set_u8(head, off + j, mapped_prefix_byte(j))
         return write_ipv4(head, off + 7, a.mapped_ipv4())
     let rs = zero_run_start(a)
@@ -1240,7 +1235,7 @@ fn write_ipv6(dst: Bytes, off: Int, a: Ipv6) -> Bytes
     // The groups before the `::`, joined by `:`.  When there is no run
     // to elide, `rs` is `-1`, this loop writes nothing and the second
     // one writes all eight.
-    for i in 0 .. rs
+    for i in 0..rs
         if i > 0
             buf = bytes.set_u8(buf, at, COLON)
             at = at + 1
@@ -1255,7 +1250,7 @@ fn write_ipv6(dst: Bytes, off: Int, a: Ipv6) -> Bytes
         0
     else
         rs + zero_run_len(a)
-    for i in tail_from .. 8
+    for i in tail_from..8
         if i > tail_from
             buf = bytes.set_u8(buf, at, COLON)
             at = at + 1
@@ -1269,7 +1264,7 @@ fn write_ipv6(dst: Bytes, off: Int, a: Ipv6) -> Bytes
 fn write_hex(dst: Bytes, at: Int, g: Int) -> Bytes
     var buf = dst
     let w = hex_digits_of(g)
-    for d in 0 .. w
+    for d in 0..w
         buf = bytes.set_u8(buf, at + w - 1 - d, hex_char(nibble_at(g, d)))
     buf
 
@@ -1286,7 +1281,7 @@ fn mapped_prefix_byte(j: Int) -> Int
 // Hex nibble `d` of `g`, counting from the least significant.
 @tier(embedded)
 fn nibble_at(g: Int, d: Int) -> Int
-    bits.band(bits.shr(g, 4 * d), 0xF)
+    (g >>> (4 * d)) & 0xF
 
 // The lower-case ASCII byte for a nibble.
 @tier(embedded)

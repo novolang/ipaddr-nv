@@ -31,7 +31,6 @@
 // about which address you have, so it is refused with a reason rather
 // than guessed at.
 
-use std.bits
 use std.int
 use std.str
 use ip
@@ -113,7 +112,7 @@ impl Net6Parse
 // A 32-bit mask with the top `p` bits set, for `p` in `0 ..= 32`.
 @tier(embedded)
 fn mask32(p: Int) -> Int
-    bits.band(bits.shl(0xFFFFFFFF, 32 - p), 0xFFFFFFFF)
+    (0xFFFFFFFF << (32 - p)) & 0xFFFFFFFF
 
 // A 64-bit mask with the top `k` bits set; `k` outside `0 ..= 64`
 // saturates, which is what the two halves of an IPv6 prefix want.
@@ -122,9 +121,9 @@ fn mask64(k: Int) -> Int
     if k <= 0
         0
     else if k >= 64
-        bits.bnot(0)
+        ~0
     else
-        bits.shl(bits.bnot(0), 64 - k)
+        ~0 << (64 - k)
 
 // ── IPv4 networks ────────────────────────────────────────────────────
 
@@ -138,7 +137,7 @@ impl Net4
     // The broadcast address: every host bit set.
     @tier(embedded)
     fn broadcast(self) -> Ipv4
-        ip.ipv4_from_int(bits.bor(self.addr.raw, hostmask_raw(self.prefix)))
+        ip.ipv4_from_int(self.addr.raw | hostmask_raw(self.prefix))
 
     // The netmask as an address — `/24` is `255.255.255.0`.
     @tier(embedded)
@@ -153,7 +152,7 @@ impl Net4
     // True when `a` is one of this network's addresses.
     @tier(embedded)
     fn contains(self, a: Ipv4) -> Bool
-        bits.band(a.raw, mask32(self.prefix)) == self.addr.raw
+        (a.raw & mask32(self.prefix)) == self.addr.raw
 
     // The first address a host may take.
     //
@@ -172,7 +171,7 @@ impl Net4
     // one, with the same two exceptions `first_host` names.
     @tier(embedded)
     fn last_host(self) -> Ipv4
-        let top = bits.bor(self.addr.raw, hostmask_raw(self.prefix))
+        let top = self.addr.raw | hostmask_raw(self.prefix)
         if self.prefix >= 31
             ip.ipv4_from_int(top)
         else
@@ -183,7 +182,7 @@ impl Net4
     // always fits an `Int`.
     @tier(embedded)
     fn num_addresses(self) -> Int
-        bits.shl(1, 32 - self.prefix)
+        1 << (32 - self.prefix)
 
     // True when the two networks share an address.
     //
@@ -197,7 +196,7 @@ impl Net4
 // The complement of the `p`-bit netmask, as a 32-bit number.
 @tier(embedded)
 fn hostmask_raw(p: Int) -> Int
-    bits.band(bits.bnot(mask32(p)), 0xFFFFFFFF)
+    ~mask32(p) & 0xFFFFFFFF
 
 // The IPv4 network with this address and prefix, or the reason there
 // is none.
@@ -222,7 +221,7 @@ fn net4(a: Ipv4, prefix: Int) -> Net4Parse
     if prefix < 0 or prefix > 32
         return net4_failed(E_BAD_PREFIX)
     Net4Parse { err: E_OK,
-                net: Net4 { addr: ip.ipv4_from_int(bits.band(a.raw, mask32(prefix))),
+                net: Net4 { addr: ip.ipv4_from_int(a.raw & mask32(prefix)),
                             prefix: prefix } }
 
 @tier(embedded)
@@ -244,8 +243,8 @@ impl Net6
     // that is what it is called here.
     @tier(embedded)
     fn last_address(self) -> Ipv6
-        ip.ipv6_from_halves(bits.bor(self.addr.hi, bits.bnot(mask64(self.prefix))),
-                            bits.bor(self.addr.lo, bits.bnot(mask64(self.prefix - 64))))
+        ip.ipv6_from_halves(self.addr.hi | ~mask64(self.prefix),
+                            self.addr.lo | ~mask64(self.prefix - 64))
 
     // The netmask as an address — `/64` is `ffff:ffff:ffff:ffff::`.
     @tier(embedded)
@@ -255,14 +254,14 @@ impl Net6
     // The host mask, the netmask's complement.
     @tier(embedded)
     fn hostmask(self) -> Ipv6
-        ip.ipv6_from_halves(bits.bnot(mask64(self.prefix)),
-                            bits.bnot(mask64(self.prefix - 64)))
+        ip.ipv6_from_halves(~mask64(self.prefix),
+                            ~mask64(self.prefix - 64))
 
     // True when `a` is one of this network's addresses.
     @tier(embedded)
     fn contains(self, a: Ipv6) -> Bool
-        bits.band(a.hi, mask64(self.prefix)) == self.addr.hi
-            and bits.band(a.lo, mask64(self.prefix - 64)) == self.addr.lo
+        (a.hi & mask64(self.prefix)) == self.addr.hi
+            and (a.lo & mask64(self.prefix - 64)) == self.addr.lo
 
     // The first address a host may take.
     //
@@ -293,7 +292,7 @@ impl Net6
         if 128 - self.prefix > 62
             -1
         else
-            bits.shl(1, 128 - self.prefix)
+            1 << (128 - self.prefix)
 
     // True when the two networks share an address.
     @tier(embedded)
@@ -334,8 +333,8 @@ fn net6(a: Ipv6, prefix: Int) -> Net6Parse
     if prefix < 0 or prefix > 128
         return net6_failed(E_BAD_PREFIX)
     Net6Parse { err: E_OK,
-                net: Net6 { addr: ip.ipv6_from_halves(bits.band(a.hi, mask64(prefix)),
-                                                      bits.band(a.lo, mask64(prefix - 64))),
+                net: Net6 { addr: ip.ipv6_from_halves(a.hi & mask64(prefix),
+                                                      a.lo & mask64(prefix - 64)),
                             prefix: prefix } }
 
 @tier(embedded)
@@ -354,7 +353,7 @@ fn byte_of(s: Str, i: Int) -> Int
 @tier(app)
 fn slash_index(s: Str, n: Int) -> Int
     var found = -1
-    for i in 0 .. n
+    for i in 0..n
         if byte_of(s, i) == SLASH
             if found >= 0
                 return -2
@@ -373,11 +372,11 @@ fn slash_index(s: Str, n: Int) -> Int
 fn prefix_value(s: Str, from: Int, to: Int, max: Int) -> Int
     if to <= from
         return 0 - E_EMPTY_PART
-    for i in from .. to
+    for i in from..to
         if byte_of(s, i) == DOT
             return 0 - E_NETMASK_FORM
     var value = 0
-    for i in from .. to
+    for i in from..to
         let c = byte_of(s, i)
         if c < D_ZERO or c > D_NINE
             return 0 - E_BAD_PREFIX
@@ -425,7 +424,7 @@ fn parse_net4(s: Str, strict: Bool) -> Net4Parse
             return net4_failed(0 - v)
         prefix = v
     let a: Ipv4 = p4.addr
-    if strict and bits.band(a.raw, hostmask_raw(prefix)) != 0
+    if strict and (a.raw & hostmask_raw(prefix)) != 0
         return net4_failed(E_HOST_BITS)
     net4(a, prefix)
 
@@ -465,7 +464,7 @@ fn parse_net6(s: Str, strict: Bool) -> Net6Parse
             return net6_failed(0 - v)
         prefix = v
     let a: Ipv6 = p6.addr
-    if strict and (bits.band(a.hi, bits.bnot(mask64(prefix))) != 0
-                   or bits.band(a.lo, bits.bnot(mask64(prefix - 64))) != 0)
+    if strict and ((a.hi & ~mask64(prefix)) != 0
+                   or (a.lo & ~mask64(prefix - 64)) != 0)
         return net6_failed(E_HOST_BITS)
     net6(a, prefix)

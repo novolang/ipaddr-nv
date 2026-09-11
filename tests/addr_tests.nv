@@ -428,7 +428,7 @@ fn test_every_reason_has_a_code_and_a_sentence() [io]
     // `error_of` is total over the codes the package uses, and success
     // is None rather than a variant nobody can act on.
     test.assert_none(ip.error_of(0))
-    for code in 1 .. 14
+    for code in 1..14
         test.case(str.from_int(code))
         match ip.error_of(code)
             Some(e) => test.assert_true(str.len(show.reason(e)) > 10,
