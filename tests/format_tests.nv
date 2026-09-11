@@ -17,6 +17,7 @@
 // lexical rules — lower case, no leading zeros in a group, at most one
 // `::`, and never a `::` standing for a single group.
 
+use std.bytes
 use std.str
 use std.test
 use ip
@@ -126,6 +127,60 @@ fn test_the_length_a_caller_sizes_a_buffer_with_is_the_length_written() [io]
         test.case(show.addr6(a))
         test.assert_eq(str.len(show.addr6(a)), ip.ipv6_len(a))
 
+// ── the caller's own buffer ──────────────────────────────────────────
+//
+// `show.addr4` and `show.addr6` allocate the text.  `write_ipv4` and
+// `write_ipv6` put the same characters into a buffer the caller already
+// holds, which is what an embedded caller with no heap uses and what a
+// server writing into a frame uses.  The two spellings have to agree
+// character for character, and the write has to land where it was told
+// and nowhere else.
+
+@test
+fn test_write_ipv4_writes_the_text_at_the_offset_it_was_given() [io]
+    let a = ip.ipv4(192, 0, 2, 1)
+    let exact = ip.write_ipv4(bytes.zeros(ip.ipv4_len(a)), 0, a)
+    test.assert_eq_str(bytes.to_str(exact), "192.0.2.1")
+    test.assert_eq_str(bytes.to_str(exact), show.addr4(a))
+
+    // Written into the middle of a buffer of 0xff, the bytes on either
+    // side of the run are still 0xff: nothing was written past the
+    // length `ipv4_len` promised.
+    let room = ip.ipv4_len(a)
+    let framed = ip.write_ipv4(bytes.fill(bytes.zeros(room + 4), 0, room + 4, 255), 2, a)
+    test.assert_eq(bytes.byte_at(framed, 1), Some(255))
+    test.assert_eq(bytes.byte_at(framed, 2 + room), Some(255))
+    test.assert_eq_str(bytes.to_str(bytes.slice(framed, 2, 2 + room)), show.addr4(a))
+
+    // The widths a single octet can take, so the digit loop is walked
+    // at one, two and three characters.
+    test.assert_eq_str(bytes.to_str(write4(ip.ipv4(0, 0, 0, 0))), "0.0.0.0")
+    test.assert_eq_str(bytes.to_str(write4(ip.ipv4(10, 100, 1, 0))), "10.100.1.0")
+    test.assert_eq_str(bytes.to_str(write4(ip.ipv4(255, 255, 255, 255))),
+                       "255.255.255.255")
+
+@test
+fn test_write_ipv6_writes_what_show_addr6_returns() [io]
+    // Every pattern of zero groups, both spellings, the same text.
+    for p in 0..256
+        let a = pattern(p)
+        test.case(show.addr6(a))
+        test.assert_eq_str(bytes.to_str(write6(a)), show.addr6(a))
+
+    // The IPv4-mapped branch is the one path `write_ipv6` has that the
+    // group loop never reaches, and it is the one that calls
+    // `write_ipv4` at an offset of its own.
+    let m = ip.ipv4_mapped(ip.ipv4(192, 0, 2, 1))
+    test.assert_eq_str(bytes.to_str(write6(m)), "::ffff:192.0.2.1")
+    test.assert_eq_str(bytes.to_str(write6(m)), show.addr6(m))
+
+    // At an offset, with a witness byte on each side.
+    let room = ip.ipv6_len(m)
+    let framed = ip.write_ipv6(bytes.fill(bytes.zeros(room + 4), 0, room + 4, 255), 3, m)
+    test.assert_eq(bytes.byte_at(framed, 2), Some(255))
+    test.assert_eq(bytes.byte_at(framed, 3 + room), Some(255))
+    test.assert_eq_str(bytes.to_str(bytes.slice(framed, 3, 3 + room)), show.addr6(m))
+
 // ── the generated round trip ─────────────────────────────────────────
 
 @test
@@ -178,6 +233,14 @@ fn canon6(input: Str) -> Str
         return "error"
     let a: Ipv6 = p.addr
     show.addr6(a)
+
+// The text of an address, written into a buffer sized by the package's
+// own length call — the shape a caller with its own memory uses.
+fn write4(a: Ipv4) -> Bytes
+    ip.write_ipv4(bytes.zeros(ip.ipv4_len(a)), 0, a)
+
+fn write6(a: Ipv6) -> Bytes
+    ip.write_ipv6(bytes.zeros(ip.ipv6_len(a)), 0, a)
 
 fn canon4(input: Str) -> Str
     let p = ip.parse_ipv4(input)

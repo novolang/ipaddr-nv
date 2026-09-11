@@ -1,6 +1,6 @@
 [package]
 name        = "ipaddr-nv"
-version     = "0.1.1"
+version     = "0.1.2"
 description = "IP addresses and CIDR networks as value types: an IPv4 or IPv6 address parses into a struct that lives on the stack, formats back out under RFC 5952, classifies itself against the special-purpose registry, and converts to bytes and integers without touching the heap."
 license     = "Apache-2.0"
 stability   = "experimental"

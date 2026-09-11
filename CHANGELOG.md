@@ -4,6 +4,11 @@ Every published version, newest first. This file is on the publish
 allow-list, so it travels with the package: it is the only thing a
 consumer deciding whether to upgrade can read.
 
+## 0.1.2 — 2026-09-12
+
+- **The `ip.ipv4_from_bytes` example compiles again.**  `bytes.from_hex` answers a `?Bytes` and the example passed it straight into a `Bytes` parameter; a nullable is no longer accepted there, so the example unwraps it (`?? bytes.zeros(4)`).  No signature changed and no behaviour changed — only the example.
+- **`write_ipv4` and `write_ipv6` are covered by tests, not only by the allocation probe.**  Both were exercised by `tests/alloc_probe.nv`, which the allocation scan drives and `novo test` never runs, so the release recorded its shard bar at 4/5.  `tests/format_tests.nv` now asserts what each writes, at an offset, against what `show.addr4` and `show.addr6` return — and, for `write_ipv6`, over all 256 zero-run patterns and the IPv4-mapped branch.  The release records 5/5.
+
 ## 0.1.1 — 2026-09-08
 
 - **Declares its layer**: `layer = "core"` in the manifest — the public API requires no effects, and `novo pkg publish` now checks the code against that budget.  The layers are described under Design in the [publishing guide](https://novo-lang.org/docs/publishing.html#design).
